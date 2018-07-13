@@ -12,6 +12,7 @@ from torchvision import transforms, utils
 from torch.utils.data.sampler import Sampler
 
 from pycocotools.coco import COCO
+from pycocotools._mask import decode
 
 import skimage.io
 import skimage.transform
@@ -24,7 +25,7 @@ from PIL import Image
 class CocoDataset(Dataset):
     """Coco dataset."""
 
-    def __init__(self, root_dir, set_name='train2017', transform=None):
+    def __init__(self, root_dir, set_name='train2017', transform=None, sparse=True):
         """
         Args:
             root_dir (string): COCO directory.
@@ -34,6 +35,7 @@ class CocoDataset(Dataset):
         self.root_dir = root_dir
         self.set_name = set_name
         self.transform = transform
+        self.sparse = sparse
 
         self.coco      = COCO(os.path.join(self.root_dir, 'annotations', 'instances_' + self.set_name + '.json'))
         self.image_ids = self.coco.getImgIds()
@@ -62,10 +64,17 @@ class CocoDataset(Dataset):
         return len(self.image_ids)
 
     def __getitem__(self, idx):
-
         img = self.load_image(idx)
-        annot = self.load_annotations(idx)
-        sample = {'img': img, 'annot': annot}
+        annot, mask = self.load_annotations(idx)
+        sample = {'img': img, 'annot': annot,}
+        if mask is None:
+            if self.sparse:
+                mask = np.zeros(img.shape[:2], dtype=np.uint8)
+            else:
+                mask = np.zeros((img.shape[:2] + 
+                                (1+len(self.classes),)), dtype=np.uint8)
+                mask[:,:,0] = 1 
+        sample['mask'] = mask
         if self.transform:
             sample = self.transform(sample)
 
@@ -81,14 +90,14 @@ class CocoDataset(Dataset):
 
         return img.astype(np.float32)/255.0
 
-    def load_annotations(self, image_index):
+    def load_annotations(self, image_index, mask=True):
         # get ground truth annotations
         annotations_ids = self.coco.getAnnIds(imgIds=self.image_ids[image_index], iscrowd=False)
         annotations     = np.zeros((0, 5))
 
         # some images appear to miss annotations (like image with id 257034)
         if len(annotations_ids) == 0:
-            return annotations
+            return annotations, None
 
         # parse annotations
         coco_annotations = self.coco.loadAnns(annotations_ids)
@@ -106,8 +115,27 @@ class CocoDataset(Dataset):
         # transform from [x, y, w, h] to [x1, y1, x2, y2]
         annotations[:, 2] = annotations[:, 0] + annotations[:, 2]
         annotations[:, 3] = annotations[:, 1] + annotations[:, 3]
-
-        return annotations
+        
+        if all([("counts" in x) for x in coco_annotations]):
+            masks = decode(coco_annotations)
+            classes_ = annotations[:,-1].astype(np.uint64)
+            if self.sparse:
+                mask = np.zeros(masks.shape[:2], dtype=np.uint8)
+                for nn, cc in enumerate(classes_):
+                    cc =int(cc+1)
+                    mask = np.maximum(cc*(masks[:,:,nn]>0), mask)
+            else:
+                mask = np.zeros((masks.shape[:2] + 
+                                (1+len(self.classes),)), dtype=np.uint8)
+                for nn, cc in enumerate(classes_):
+                    cc =int(cc+1)
+                    mask[:,:,cc] = np.maximum(mask[:,:,cc], masks[:,:,nn])
+                # ADD BACKGROUND CHANNEL
+                mask[:,:,0] = 1-mask.sum(2,)
+            #padded_masks = .cat((bgmask, padded_masks), dim=1)
+        else:
+            mask = None
+        return annotations, mask
 
     def coco_label_to_label(self, coco_label):
         return self.coco_labels_inverse[coco_label]
@@ -121,7 +149,7 @@ class CocoDataset(Dataset):
         return float(image['width']) / float(image['height'])
 
     def num_classes(self):
-        return 80
+        return len(self.classes)
 
 
 class CSVDataset(Dataset):
@@ -208,8 +236,10 @@ class CSVDataset(Dataset):
     def __getitem__(self, idx):
 
         img = self.load_image(idx)
-        annot = self.load_annotations(idx)
-        sample = {'img': img, 'annot': annot}
+        annot, mask = self.load_annotations(idx)
+        sample = {'img': img, 'annot': annot,}
+        if mask is not None:
+            sample['mask'] =  mask
         if self.transform:
             sample = self.transform(sample)
 
@@ -308,30 +338,58 @@ def collater(data):
 
     imgs = [s['img'] for s in data]
     annots = [s['annot'] for s in data]
-    scales = [s['scale'] for s in data]
-        
+    if 'scale' in data[0]:
+        scales = [s['scale'] for s in data]
+    else:
+        scales = [1.0] * (len(data))
+
     widths = [int(s.shape[0]) for s in imgs]
     heights = [int(s.shape[1]) for s in imgs]
     batch_size = len(imgs)
 
-    max_width = np.array(widths).max()
-    max_height = np.array(heights).max()
+    max_width = int(np.array(widths).max())
+    max_height = int(np.array(heights).max())
 
     padded_imgs = torch.zeros(batch_size, max_width, max_height, 3)
 
     for i in range(batch_size):
-        img = imgs[i]
+        img = torch.FloatTensor( imgs[i] )
         padded_imgs[i, :int(img.shape[0]), :int(img.shape[1]), :] = img
 
     padded_imgs = padded_imgs.permute(0, 3, 1, 2)
 
-    return {'img': padded_imgs, 'annot': annots, 'scale': scales}
+    output = {'img': padded_imgs, 'annot': annots, 'scale': scales}
+    if 'mask' in data[0]:
+        masks = [s['mask'] for s in data]
+        mask_channels = masks[0].shape[-1] if len(masks[0].shape)==3 else 0
+        padded_masks = torch.zeros(batch_size, max_width, max_height, mask_channels,
+                                   dtype=torch.int64)
+        if mask_channels>0:
+            for i in range(batch_size):
+                msk = torch.FloatTensor( masks[i] )
+                padded_masks[i, :int(msk.shape[0]), :int(msk.shape[1]), :] = msk 
+            padded_masks = padded_masks.permute(0, 3, 1, 2)
+        else:
+            for i in range(batch_size):
+                msk = torch.FloatTensor( masks[i] )
+                padded_masks[i, :int(msk.shape[0]), :int(msk.shape[1])] = msk 
+            padded_masks = padded_masks.permute(0, 1, 2)
+
+        output['mask'] = padded_masks
+
+    return output
 
 class Resizer(object):
     """Convert ndarrays in sample to Tensors."""
+    def __init__(self, min_side=608, max_side=1024):
+        self.min_side = min_side
+        self.max_side = max_side
 
-    def __call__(self, sample, min_side=608, max_side=1024):
+    def __call__(self, sample, min_side=None, max_side=None):
+        min_side = self.min_side if min_side is None else min_side
+        max_side = self.max_side if max_side is None else max_side
         image, annots = sample['img'], sample['annot']
+        #print("annots",annots)
 
         rows, cols, cns = image.shape
 
@@ -351,15 +409,23 @@ class Resizer(object):
         image = skimage.transform.resize(image, (int(round(rows*scale)), int(round((cols*scale)))))
         rows, cols, cns = image.shape
 
-        pad_w = 32 - rows%32
-        pad_h = 32 - cols%32
+        if 'mask' in sample:
+            mask = skimage.transform.resize(mask, (int(round(rows*scale)), int(round((cols*scale)))), order=0)
+            mask = np.round(mask)
+
+        pad_w = 32 - ((rows-1)%32 +1)
+        pad_h = 32 - ((cols-1)%32 +1)
 
         new_image = np.zeros((rows + pad_w, cols + pad_h, cns)).astype(np.float32)
         new_image[:rows, :cols, :] = image.astype(np.float32)
 
+        #print(annots.shape, scale)
         annots[:, :4] *= scale
 
-        return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': scale}
+        output = {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': scale}
+        if 'mask' in sample:
+            output['mask'] = mask
+        return output
 
 
 class Augmenter(object):
@@ -393,10 +459,9 @@ class Normalizer(object):
         self.std = np.array([[[0.229, 0.224, 0.225]]])
 
     def __call__(self, sample):
-
-        image, annots = sample['img'], sample['annot']
-
-        return {'img':((image.astype(np.float32)-self.mean)/self.std), 'annot': annots}
+        image = sample['img']
+        sample['img'] = ((image.astype(np.float32)-self.mean)/self.std)
+        return sample
 
 class UnNormalizer(object):
     def __init__(self, mean=None, std=None):
@@ -435,6 +500,7 @@ class AspectRatioBasedSampler(Sampler):
             yield group
 
     def __len__(self):
+        return len(self.groups)
         if self.drop_last:
             return len(self.sampler) // self.batch_size
         else:

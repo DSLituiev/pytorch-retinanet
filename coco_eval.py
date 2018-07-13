@@ -25,6 +25,12 @@ def evaluate_coco(dataset, model, threshold=0.05):
 
             # run network
             scores, labels, boxes = model(data['img'].permute(2, 0, 1).cuda().float().unsqueeze(dim=0))
+            if len(boxes.shape) == 1:
+                print("no boxes predicted for the instance %d\tid = %s" % (index,
+                      dataset.image_ids[index]))
+                print(data.keys())
+                print("skipping")
+                continue
             scores = scores.cpu()
             labels = labels.cpu()
             boxes  = boxes.cpu()

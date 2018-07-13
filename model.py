@@ -243,6 +243,7 @@ class ResNet(nn.Module):
         x4 = self.layer4(x3)
 
         features = self.fpn([x2, x3, x4])
+        # Paste Unet here
 
         regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
 
