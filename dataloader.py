@@ -337,7 +337,15 @@ class CSVDataset(Dataset):
 def collater(data):
 
     imgs = [s['img'] for s in data]
-    annots = [s['annot'] for s in data]
+    try:
+        tmp = np.array([s['annot'] for s in data], dtype=float).copy()
+        if len(tmp) == 0:
+            tmp = - np.ones((1,5), dtype=float)
+        annots = torch.FloatTensor(tmp)
+    except Exception as ee:
+        print('annot')
+        print([s['annot'] for s in data])
+        raise ee
     if 'scale' in data[0]:
         scales = [s['scale'] for s in data]
     else:
@@ -435,7 +443,15 @@ class Augmenter(object):
 
         if np.random.rand() < flip_x:
             image, annots = sample['img'], sample['annot']
-            image = image[:, ::-1, :]
+            image = image[:, ::-1, :].copy()
+            if 'mask' in sample:
+                mask= sample['mask']
+                if len(mask.shape) == 2:
+                    mask = mask[:,::-1].copy()
+                elif len(mask.shape) == 3:
+                    mask = mask[:,::-1,:].copy()
+                else:
+                    raise ValueError()
 
             rows, cols, channels = image.shape
 
@@ -447,7 +463,10 @@ class Augmenter(object):
             annots[:, 0] = cols - x2
             annots[:, 2] = cols - x_tmp
 
-            sample = {'img': image, 'annot': annots}
+            sample['img']= image
+            sample['annot'] = annots
+            if 'mask' in sample:
+                sample['mask'] = mask
 
         return sample
 

@@ -4,6 +4,9 @@ import torch.nn as nn
 
 
 def calc_iou(a, b):
+    #print("calc_iou")
+    #print("a", a)
+    #print("b", b)
     area = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
 
     iw = torch.min(torch.unsqueeze(a[:, 2], dim=1), b[:, 2]) - torch.max(torch.unsqueeze(a[:, 0], 1), b[:, 0])
@@ -35,7 +38,8 @@ def loss(classifications, regression, anchors, annotations):
     for j in range(batch_size):
 
         classification = classifications[j, :, :]
-        annotation = annotations[j].float().cuda()
+        #annotation = annotations[j].float().cuda()
+        annotation = annotations[j]
 
         if annotation.shape[0] == 0:
             print('no annots')
