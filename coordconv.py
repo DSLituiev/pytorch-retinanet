@@ -14,6 +14,9 @@ class AddCoordsTh(nn.Module):
         """
         input_tensor: (batch, c, x_dim, y_dim)
         """
+
+        use_gpu = input_tensor.type().startswith('torch.cuda')
+
         batch_size_tensor = input_tensor.shape[0]
         self.x_dim = input_tensor.shape[-2] 
         self.y_dim = input_tensor.shape[-1]
@@ -48,10 +51,15 @@ class AddCoordsTh(nn.Module):
         xx_channel = xx_channel.repeat(batch_size_tensor, 1, 1, 1)
         yy_channel = yy_channel.repeat(batch_size_tensor, 1, 1, 1)
 
+        if use_gpu:
+            xx_channel = xx_channel.cuda()
+            yy_channel = yy_channel.cuda()
         ret = torch.cat([input_tensor, xx_channel, yy_channel], dim=1)
 
         if self.with_r:
             rr = torch.sqrt(torch.pow(xx_channel - 0.5, 2) + torch.pow(yy_channel - 0.5, 2))
+            if use_gpu:
+                rr = rr.cuda()
             ret = torch.cat([ret, rr], dim=1)
 
         return ret
