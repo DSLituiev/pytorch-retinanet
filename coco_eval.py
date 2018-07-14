@@ -8,8 +8,9 @@ import json
 import os
 
 import torch
+from losses import iou
 
-def evaluate_coco(dataset, model, threshold=0.05):
+def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True):
     
     model.eval()
     
@@ -27,7 +28,17 @@ def evaluate_coco(dataset, model, threshold=0.05):
                 scale = 1.0
 
             # run network
-            scores, labels, boxes = model(data['img'].permute(2, 0, 1).cuda().float().unsqueeze(dim=0))
+            img = torch.FloatTensor(data['img'])
+            img = img.permute(2, 0, 1)
+            msk = data['mask'][np.newaxis]
+
+            if use_gpu:
+                img = img.cuda()
+            scores, labels, boxes, semsegm = model(img.float().unsqueeze(dim=0))
+            semsegm = semsegm.detach().numpy()
+            iou_ = iou(msk, semsegm) 
+            print("iou", iou_)
+
             if len(boxes.shape) == 1:
                 print("no boxes predicted for the instance %d\tid = %s" % (index,
                       dataset.image_ids[index]))
@@ -37,6 +48,7 @@ def evaluate_coco(dataset, model, threshold=0.05):
             scores = scores.cpu()
             labels = labels.cpu()
             boxes  = boxes.cpu()
+            #semsegm = semsegm.cpu()
 
             # correct boxes for image scale
             boxes /= scale

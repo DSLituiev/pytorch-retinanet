@@ -2,6 +2,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+def iou(mask, pred, stabilize = 1e-12):
+    pred = pred>0.5
+    union = np.sum(np.logical_or(mask, pred))
+    intersection = np.sum(np.logical_and(mask, pred))
+    iou = (intersection+stabilize)/(union+stabilize)
+    return iou
+
 
 def calc_iou(a, b):
     #print("calc_iou")

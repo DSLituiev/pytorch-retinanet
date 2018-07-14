@@ -73,7 +73,6 @@ class CoordConv(nn.Module):
                  with_r=False, **kwargs):
         super(CoordConv, self).__init__()
         self.addcoords = AddCoordsTh(with_r=with_r,) #x_dim=x_dim, y_dim=y_dim,)
-        print("args", len(args))
         self.dimensions = dimensions
         in_channels += self.dimensions
         self.conv = nn.Conv2d(in_channels, *args, **kwargs)

@@ -151,7 +151,7 @@ def main(args=None):
 
                 #print("="*10, 0)
                 img = data['img']
-                msk = data['mask']o
+                msk = data['mask']
                 nelements = msk.shape[-1] * msk.shape[-2]
                 annot = data['annot']
                 if use_gpu:

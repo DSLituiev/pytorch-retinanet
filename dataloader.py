@@ -353,6 +353,7 @@ def collater(data):
         scales = [s['scale'] for s in data]
     else:
         scales = [1.0] * (len(data))
+    #print('scales', scales)
 
     widths = [int(s.shape[0]) for s in imgs]
     heights = [int(s.shape[1]) for s in imgs]
@@ -370,6 +371,7 @@ def collater(data):
     padded_imgs = padded_imgs.permute(0, 3, 1, 2)
 
     output = {'img': padded_imgs, 'annot': annots, 'scale': scales}
+
     if 'mask' in data[0]:
         masks = [s['mask'] for s in data]
         mask_channels = masks[0].shape[-1] if len(masks[0].shape)==3 else 0
