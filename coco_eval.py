@@ -21,7 +21,10 @@ def evaluate_coco(dataset, model, threshold=0.05):
 
         for index in range(len(dataset)):
             data = dataset[index]
-            scale = data['scale']
+            if 'scale' in data:
+                scale = data['scale']
+            else:
+                scale = 1.0
 
             # run network
             scores, labels, boxes = model(data['img'].permute(2, 0, 1).cuda().float().unsqueeze(dim=0))
