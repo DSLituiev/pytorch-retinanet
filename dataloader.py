@@ -339,11 +339,14 @@ def collater(data):
     imgs = [s['img'] for s in data]
     try:
         tmp = np.array([s['annot'] for s in data], dtype=float).copy()
-        if len(tmp) == 0:
-            tmp = - np.ones((1,5), dtype=float)
+        if any((x==0 for x in tmp.shape)):
+            newshape = np.asarray(tmp.shape)
+            newshape[[x==0 for x in tmp.shape]] = 1
+            tmp = - np.ones(newshape, dtype=float)
         annots = torch.FloatTensor(tmp)
     except Exception as ee:
         print('annot')
+        print("tmp", tmp, tmp.shape)
         print([s['annot'] for s in data])
         raise ee
     if 'scale' in data[0]:

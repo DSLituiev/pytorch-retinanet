@@ -46,6 +46,7 @@ def loss(classifications, regression, anchors, annotations):
             regression_losses.append(torch.tensor(0).float().cuda())
             classification_losses.append(torch.tensor(0).float().cuda())
             continue
+        use_gpu = anchors.type().startswith('torch.cuda')
 
         classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
 
@@ -55,7 +56,8 @@ def loss(classifications, regression, anchors, annotations):
 
         # compute the loss for classification
         targets = torch.ones(classification.shape) * -1
-        targets = targets.cuda()
+        if use_gpu:
+            targets = targets.cuda()
         
         targets[torch.lt(IoU_max, 0.4), :] = 0
 
@@ -68,7 +70,12 @@ def loss(classifications, regression, anchors, annotations):
         targets[positive_indices, :] = 0
         targets[positive_indices, assigned_annotations[positive_indices, 4].long()] = 1
 
-        alpha_factor = torch.ones(targets.shape).cuda() * alpha
+        
+        if use_gpu:
+            anchors = anchors.cuda()
+        alpha_factor = torch.ones(targets.shape) * alpha
+        if use_gpu:
+            alpha_factor = alpha_factor.cuda()
 
         alpha_factor = torch.where(torch.eq(targets, 1.), alpha_factor, 1. - alpha_factor)
         focal_weight = torch.where(torch.eq(targets, 1.), 1. - classification, classification)
@@ -78,8 +85,13 @@ def loss(classifications, regression, anchors, annotations):
 
         # cls_loss = focal_weight * torch.pow(bce, gamma)
         cls_loss = focal_weight * bce
+        dummies = torch.zeros(cls_loss.shape)
+        if use_gpu:
+            cls_loss = cls_loss.cuda()
+            dummies = dummies.cuda()
 
-        cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, torch.zeros(cls_loss.shape).cuda())
+        cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss,
+                               dummies)
 
         classification_losses.append(cls_loss.sum()/torch.clamp(num_positive_anchors.float(), min=1.0))
 
@@ -107,7 +119,10 @@ def loss(classifications, regression, anchors, annotations):
         targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh))
         targets = targets.t()
 
-        targets = targets/torch.Tensor([[0.1, 0.1, 0.2, 0.2]]).cuda()
+        scale_targets = torch.Tensor([[0.1, 0.1, 0.2, 0.2]])
+        if use_gpu:
+            scale_targets = scale_targets.cuda()
+        targets = targets/scale_targets
         # targets = targets/torch.Tensor([[1., 1., 1., 1.]]).cuda()
 
 
@@ -125,6 +140,9 @@ def loss(classifications, regression, anchors, annotations):
         if positive_indices.sum() > 0:
             regression_losses.append(regression_loss[positive_indices, :].mean())
         else:
-            regression_losses.append(torch.tensor(0).float().cuda())
+            reg_loss = torch.tensor(0).float()
+            if use_gpu:
+                reg_loss = reg_loss.cuda()
+            regression_losses.append(reg_loss)
         
     return torch.stack(classification_losses).mean(), torch.stack(regression_losses).mean()
