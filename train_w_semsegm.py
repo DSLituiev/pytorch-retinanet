@@ -43,6 +43,9 @@ def main(args=None):
 
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
     parser.add_argument('--epochs', help='Number of epochs', type=int, default=100)
+    parser.add_argument('--w-sem', help='weight for semantic segmentation branch', type=float, default=0.0)
+    parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
+    parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
 
     parser = parser.parse_args(args)
 
@@ -135,7 +138,8 @@ def main(args=None):
     print('Num training images: {}'.format(len(dataset_train)))
     logdir = "checkpoints"
     os.makedirs(logdir, exist_ok=True)
-    semantic_xe = nn.NLLLoss(reduce=True)
+    semantic_xe = nn.NLLLoss(reduce=True, size_average=True)
+    
     for epoch_num in range(parser.epochs):
         retinanet.train()
         retinanet.freeze_bn()   
@@ -147,7 +151,8 @@ def main(args=None):
 
                 #print("="*10, 0)
                 img = data['img']
-                msk = data['mask']
+                msk = data['mask']o
+                nelements = msk.shape[-1] * msk.shape[-2]
                 annot = data['annot']
                 if use_gpu:
                     img = img.cuda()
@@ -156,12 +161,14 @@ def main(args=None):
                 classification, regression, anchors, semantic =\
                     retinanet(img)
 
-                semantic_loss = semantic_xe(semantic, msk)
+                semantic_loss = semantic_xe(semantic, msk) / nelements
                 classification_loss, regression_loss =\
                     total_loss(classification, regression, 
                                anchors, annot)
 
-                loss = classification_loss + regression_loss
+                loss = parser.w_class * classification_loss + \
+                       parser.w_regr * regression_loss + \
+                       parser.w_sem * semantic_loss
                 
                 if bool(loss == 0):
                     continue
