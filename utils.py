@@ -81,19 +81,18 @@ class BBoxTransform(nn.Module):
 
     def __init__(self, mean=None, std=None, cuda=False):
         super(BBoxTransform, self).__init__()
-        if mean is None:
-            self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32))
-        else:
-            self.mean = mean
-        if std is None:
-            self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
-        else:
-            self.std = std
-        if cuda:
-            self.std = self.std.cuda()
-            self.mean = self.mean.cuda()
+        self.mean = mean
+        self.std = std
 
     def forward(self, boxes, deltas):
+        if self.mean is None:
+            self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32))
+        if self.std is None:
+            self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
+
+        if deltas.type().startswith('torch.cuda'):
+            self.std = self.std.cuda()
+            self.mean = self.mean.cuda()
 
         widths  = boxes[:, :, 2] - boxes[:, :, 0]
         heights = boxes[:, :, 3] - boxes[:, :, 1]
