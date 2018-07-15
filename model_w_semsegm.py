@@ -488,9 +488,13 @@ def get_out_channels(layer):
 class RetinaNet(nn.Module):
     def __init__(self, num_classes, block=Bottleneck, layers=[3, 4, 6, 3],
                  prior = 0.01,
+                 no_rpn = False,
+                 no_semantic=False,
                  ):
         super(RetinaNet, self).__init__()
         
+        self.no_rpn = no_rpn
+        self.no_semantic = no_semantic
         self.encoder = ResNet(block=block, layers=layers)
         self.fpn_sizes = [get_out_channels(getattr(self.encoder,"layer%d"%nn)) for nn in [2,3,4]]
         print("fpn_sizes")
@@ -550,11 +554,18 @@ class RetinaNet(nn.Module):
 #         sem_segm = self.
         
         features = self.fpn([x2, x3, x4])
-        sem_segm = self.decoder([x2, x3, x4])
 
-        regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
+        if not self.no_semantic:
+            sem_segm = self.decoder([x2, x3, x4])
+        else:
+            sem_segm = None
 
-        classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
+        if not self.no_rpn:
+            regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
+            classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
+        else:
+            regression = None
+            classification = None
         
         anchors = self.anchors(img_batch)
         if img_batch.type().startswith('torch.cuda'):
@@ -563,30 +574,33 @@ class RetinaNet(nn.Module):
         if self.training:
             return [classification, regression, anchors, sem_segm]
         else:
-            transformed_anchors = self.regressBoxes(anchors, regression)
-            transformed_anchors = self.clipBoxes(transformed_anchors, img_batch)
+            if not self.no_rpn:
+                transformed_anchors = self.regressBoxes(anchors, regression)
+                transformed_anchors = self.clipBoxes(transformed_anchors, img_batch)
 
-            scores = torch.max(classification, dim=2, keepdim=True)[0]
+                scores = torch.max(classification, dim=2, keepdim=True)[0]
 
-            scores_over_thresh = (scores>0.05)[0, :, 0]
+                scores_over_thresh = (scores>0.05)[0, :, 0]
 
-            if scores_over_thresh.sum() == 0:
-                # no boxes to NMS, just return
-                return [torch.zeros(0), torch.zeros(0), torch.zeros(0, 4),
+                if scores_over_thresh.sum() == 0:
+                    # no boxes to NMS, just return
+                    return [torch.zeros(0), torch.zeros(0), torch.zeros(0, 4),
+                            sem_segm]
+
+                classification = classification[:, scores_over_thresh, :]
+                transformed_anchors = transformed_anchors[:, scores_over_thresh, :]
+                scores = scores[:, scores_over_thresh, :]
+
+                anchors_nms_idx = nms(torch.cat([transformed_anchors, scores], dim=2)[0, :, :], 0.5)
+
+                nms_scores, nms_class = classification[0, anchors_nms_idx, :].max(dim=1)
+
+                return [nms_scores, 
+                        nms_class,
+                        transformed_anchors[0, anchors_nms_idx, :], 
                         sem_segm]
-
-            classification = classification[:, scores_over_thresh, :]
-            transformed_anchors = transformed_anchors[:, scores_over_thresh, :]
-            scores = scores[:, scores_over_thresh, :]
-
-            anchors_nms_idx = nms(torch.cat([transformed_anchors, scores], dim=2)[0, :, :], 0.5)
-
-            nms_scores, nms_class = classification[0, anchors_nms_idx, :].max(dim=1)
-
-            return [nms_scores, 
-                    nms_class,
-                    transformed_anchors[0, anchors_nms_idx, :], 
-                    sem_segm]
+            else:
+                return [classification, regression, anchors, sem_segm]
 
 
 #############################################################
