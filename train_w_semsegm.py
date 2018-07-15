@@ -1,5 +1,6 @@
 import time
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import copy
 import argparse
 import pdb
@@ -23,6 +24,7 @@ from dataloader import CocoDataset, CSVDataset, collater, Resizer, AspectRatioBa
 from torch.utils.data import Dataset, DataLoader
 
 import coco_eval
+from attrdict import AttrDict
 
 assert int(torch.__version__.split('.')[1]) >= 3
 
@@ -42,12 +44,16 @@ def main(args=None):
     parser.add_argument('--csv_val', help='Path to file containing validation annotations (optional, see readme)')
 
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
+    parser.add_argument('--batch-size', help='batch size', type=int, default=2)
     parser.add_argument('--epochs', help='Number of epochs', type=int, default=100)
     parser.add_argument('--w-sem', help='weight for semantic segmentation branch', type=float, default=0.0)
     parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
 
     parser = parser.parse_args(args)
+    arghash = AttrDict(parser.__dict__).md5
+    print("argument hash:", arghash)
+    
 
     # Create the data loaders
     if parser.dataset == 'coco':
@@ -86,7 +92,7 @@ def main(args=None):
     else:
         raise ValueError('Dataset type not understood (must be csv or coco), exiting.')
 
-    sampler = AspectRatioBasedSampler(dataset_train, batch_size=1, drop_last=False)
+    sampler = AspectRatioBasedSampler(dataset_train, batch_size=parser.batch_size, drop_last=False)
     dataloader_train = DataLoader(dataset_train, num_workers=4, collate_fn=collater, batch_sampler=sampler)
 
     print(dataset_train[0].keys())
@@ -97,7 +103,7 @@ def main(args=None):
     print('-'*20)
 
     if dataset_val is not None:
-        sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=1, drop_last=False)
+        sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=parser.batch_size, drop_last=False)
         dataloader_val = DataLoader(dataset_val, num_workers=1, collate_fn=collater, batch_sampler=sampler_val)
 
     # Create the model
@@ -118,7 +124,6 @@ def main(args=None):
         retinanet = (torch.load(parser.load))
         #retinanet.load_state_dict(torch.load(parser.load))
 
-
     if use_gpu:
         retinanet = retinanet.cuda()
 
@@ -136,11 +141,12 @@ def main(args=None):
     retinanet.freeze_bn()
 
     print('Num training images: {}'.format(len(dataset_train)))
-    logdir = "checkpoints"
+    logdir = "checkpoints/{}".format(arghash)
     os.makedirs(logdir, exist_ok=True)
     semantic_xe = nn.CrossEntropyLoss(reduce=True, size_average=True)
 
-    logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.5f} | Running: {:1.4f}''' % int(np.ceil(np.log10(len(dataloader_train))))
+    ndigits = int(np.ceil(np.log10(len(dataloader_train))))
+    logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.5f} | Running: {:1.4f}'''  % ( ndigits, ndigits) 
     
     for epoch_num in range(parser.epochs):
         retinanet.train()
