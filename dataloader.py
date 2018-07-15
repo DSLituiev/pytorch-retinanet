@@ -346,7 +346,7 @@ def collater(data):
         annots = torch.FloatTensor(tmp)
     except Exception as ee:
         print('annot')
-        print("tmp", tmp, tmp.shape)
+        #print("tmp", tmp, tmp.shape)
         print([s['annot'] for s in data])
         raise ee
     if 'scale' in data[0]:

@@ -8,6 +8,7 @@ import json
 import os
 
 import torch
+import torch.nn as nn
 from losses import sparse_iou_np
 
 def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True):
