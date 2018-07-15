@@ -138,7 +138,9 @@ def main(args=None):
     print('Num training images: {}'.format(len(dataset_train)))
     logdir = "checkpoints"
     os.makedirs(logdir, exist_ok=True)
-    semantic_xe = nn.NLLLoss(reduce=True, size_average=True)
+    semantic_xe = nn.CrossEntropyLoss(reduce=True, size_average=True)
+
+    logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.5f} | Running: {:1.4f}''' % int(np.ceil(np.log10(len(dataloader_train))))
     
     for epoch_num in range(parser.epochs):
         retinanet.train()
@@ -161,7 +163,7 @@ def main(args=None):
                 classification, regression, anchors, semantic =\
                     retinanet(img)
 
-                semantic_loss = semantic_xe(semantic, msk) / nelements
+                semantic_loss = semantic_xe(semantic, msk) #/ nelements
                 classification_loss, regression_loss =\
                     total_loss(classification, regression, 
                                anchors, annot)
@@ -180,15 +182,15 @@ def main(args=None):
                 loss_hist.append(float(loss))
                 epoch_loss.append(float(loss))
 
-                print(
-'''Ep#{} | Iter#{}/{:d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.4f} | Running: {:1.4f}'''.format(epoch_num, iter_num, len(dataloader_train),
+                print( logstr.format(epoch_num, iter_num, len(dataloader_train),
                     float(classification_loss),
                     float(regression_loss), float(semantic_loss),
                     np.mean(loss_hist)))
 
             except Exception as e:
-                raise e
+                #raise e
                 print(e)
+                #break
         
         
         if parser.dataset == 'coco':

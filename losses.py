@@ -2,12 +2,36 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-def iou(mask, pred, stabilize = 1e-12):
+def iou_per_channel_np(mask, pred, stabilize = 1e-12):
+    """
+    Input:
+        - mask [batch_size, width, height]
+        - pred [batch_size, width, height]
+    """
     pred = pred>0.5
     union = np.sum(np.logical_or(mask, pred))
     intersection = np.sum(np.logical_and(mask, pred))
     iou = (intersection+stabilize)/(union+stabilize)
     return iou
+
+def sparse_iou_np(mask, pred, skip_bg = True,
+                  reduce=True,
+                  stabilize = 1e-12):
+    """
+    Input:
+        - mask [batch_size, width, height]            -- ground truth
+        - pred [batch_size, channels, width, height]  -- predicted probabilities
+    """
+    start = 1 if skip_bg else 0
+    iou_ = np.zeros(pred.shape[1] - start)
+    for cc in range(start, pred.shape[1]):
+        prob_channel = pred[:,cc,...]
+        mask_channel = (mask == cc)
+        iou_[cc-start] = iou_per_channel_np(mask_channel, prob_channel,
+										    stabilize=stabilize)
+    if reduce:
+        iou_ = np.sum(iou_)
+    return iou_
 
 
 def calc_iou(a, b):
@@ -16,8 +40,10 @@ def calc_iou(a, b):
     #print("b", b)
     area = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
 
-    iw = torch.min(torch.unsqueeze(a[:, 2], dim=1), b[:, 2]) - torch.max(torch.unsqueeze(a[:, 0], 1), b[:, 0])
-    ih = torch.min(torch.unsqueeze(a[:, 3], dim=1), b[:, 3]) - torch.max(torch.unsqueeze(a[:, 1], 1), b[:, 1])
+    iw = torch.min(torch.unsqueeze(a[:, 2], dim=1), b[:, 2]) -\
+			 torch.max(torch.unsqueeze(a[:, 0], 1), b[:, 0])
+    ih = torch.min(torch.unsqueeze(a[:, 3], dim=1), b[:, 3]) -\
+			 torch.max(torch.unsqueeze(a[:, 1], 1), b[:, 1])
 
     iw = torch.clamp(iw, min=0)
     ih = torch.clamp(ih, min=0)

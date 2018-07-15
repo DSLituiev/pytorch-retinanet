@@ -8,7 +8,7 @@ import json
 import os
 
 import torch
-from losses import iou
+from losses import sparse_iou_np
 
 def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True):
     
@@ -18,6 +18,7 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True):
 
         # start collecting results
         results = []
+        results_semantic = []
         image_ids = []
 
         for index in range(len(dataset)):
@@ -35,10 +36,16 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True):
             if use_gpu:
                 img = img.cuda()
             scores, labels, boxes, semsegm = model(img.float().unsqueeze(dim=0))
-            semsegm = semsegm.detach().numpy()
-            iou_ = iou(msk, semsegm) 
-            print("iou", iou_)
+            # CONVERT LOGITS TO PROBABLILITIES
+            semsegm = nn.Softmax2d()(semsegm)
+            semsegm = semsegm.detach().cpu().numpy()
+            iou_ = sparse_iou_np(msk, semsegm, reduce=False).tolist() 
+            results_semantic.append({'image_id': dataset.image_ids[index],
+                                     'iou':iou_})
+            #print("iou", iou_)
 
+            #if len(results_semantic)>1:
+            #    break 
             if len(boxes.shape) == 1:
                 print("no boxes predicted for the instance %d\tid = %s" % (index,
                       dataset.image_ids[index]))
@@ -90,6 +97,8 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True):
 
         # write output
         json.dump(results, open('{}_bbox_results.json'.format(dataset.set_name), 'w'), indent=4)
+        json.dump(results_semantic, open('{}_semantic_results.json'.format(dataset.set_name), 'w'),
+                  indent=4)
 
         # load results in COCO evaluation tool
         coco_true = dataset.coco
