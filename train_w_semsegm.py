@@ -133,7 +133,7 @@ def main(args=None):
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True)
 
-    total_loss = losses.loss
+    total_loss = losses.FocalLoss()
 
     loss_hist = collections.deque(maxlen=500)
 

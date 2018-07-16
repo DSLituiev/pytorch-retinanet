@@ -335,42 +335,39 @@ class CSVDataset(Dataset):
 
 
 def collater(data):
-
+	
     imgs = [s['img'] for s in data]
-    try:
-        tmp = np.array([s['annot'] for s in data], dtype=float).copy()
-        if any((x==0 for x in tmp.shape)):
-            newshape = np.asarray(tmp.shape)
-            newshape[[x==0 for x in tmp.shape]] = 1
-            tmp = - np.ones(newshape, dtype=float)
-        annots = torch.FloatTensor(tmp)
-    except Exception as ee:
-        print('annot')
-        #print("tmp", tmp, tmp.shape)
-        print([s['annot'] for s in data])
-        raise ee
+    annots = [s['annot'] for s in data]
     if 'scale' in data[0]:
         scales = [s['scale'] for s in data]
     else:
         scales = [1.0] * (len(data))
-    #print('scales', scales)
-
+        
     widths = [int(s.shape[0]) for s in imgs]
     heights = [int(s.shape[1]) for s in imgs]
     batch_size = len(imgs)
 
-    max_width = int(np.array(widths).max())
-    max_height = int(np.array(heights).max())
+    max_width = np.array(widths).max()
+    max_height = np.array(heights).max()
 
-    padded_imgs = torch.zeros(batch_size, max_width, max_height, 3)
+    imgs_padded = torch.zeros(batch_size, max_width, max_height, 3)
 
     for i in range(batch_size):
-        img = torch.FloatTensor( imgs[i] )
-        padded_imgs[i, :int(img.shape[0]), :int(img.shape[1]), :] = img
+        img = torch.FloatTensor(imgs[i])
+        imgs_padded[i, :int(img.shape[0]), :int(img.shape[1]), :] = img
 
-    padded_imgs = padded_imgs.permute(0, 3, 1, 2)
+    max_num_annots = max(annot.shape[0] for annot in annots)
 
-    output = {'img': padded_imgs, 'annot': annots, 'scale': scales}
+    annot_padded = torch.ones((len(annots), max_num_annots, 5)) * -1
+    #print(annot_padded.shape)
+    if max_num_annots > 0:
+        for idx, annot in enumerate(annots):
+            #print(annot.shape)
+            if annot.shape[0] > 0:
+                annot_padded[idx, :annot.shape[0], :] = torch.FloatTensor( annot )
+
+    imgs_padded = imgs_padded.permute(0, 3, 1, 2)
+    output = {'img': imgs_padded, 'annot': annot_padded, 'scale': scales}
 
     if 'mask' in data[0]:
         masks = [s['mask'] for s in data]
