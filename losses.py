@@ -35,9 +35,11 @@ def sparse_iou_np(mask, pred, skip_bg = True,
 
 
 def calc_iou(a, b):
-#print("calc_iou")
-    #print("a", a)
-    #print("b", b)
+    """
+    a -- anchors
+    b -- annotations
+    """
+
     area = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
 
     iw = torch.min(torch.unsqueeze(a[:, 2], dim=1), b[:, 2]) -\
@@ -80,6 +82,7 @@ class FocalLoss(nn.Module):
             classification = classifications[j, :, :]
             regression = regressions[j, :, :]
 
+            ## Calculate IOU between ANNOTATIONS and ANCHORS
             bbox_annotation = annotations[j, :, :]
             bbox_annotation = bbox_annotation[bbox_annotation[:, 4] != -1]
 
@@ -94,7 +97,7 @@ class FocalLoss(nn.Module):
             IoU = calc_iou(anchors[0, :, :], bbox_annotation[:, :4]) # num_anchors x num_annotations
 
             IoU_max, IoU_argmax = torch.max(IoU, dim=1) # num_anchors x 1
-
+            ## 
             #import pdb
             #pdb.set_trace()
 

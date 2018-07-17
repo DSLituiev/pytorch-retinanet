@@ -83,6 +83,7 @@ class PyramidFeatures(nn.Module):
 class RegressionModel(nn.Module):
     def __init__(self, num_features_in, num_anchors=9, feature_size=256):
         super(RegressionModel, self).__init__()
+        self.num_anchors = num_anchors
         
         self.conv1 = nn.Conv2d(num_features_in, feature_size, kernel_size=3, padding=1)
         self.act1 = nn.ReLU()
@@ -116,8 +117,11 @@ class RegressionModel(nn.Module):
 
         # out is B x C x W x H, with C = 4*num_anchors
         out = out.permute(0, 2, 3, 1)
+        batch_size, width, height, channels = out.shape
+        #out2 = out.contiguous().view(batch_size, self.num_anchors, 4, width, height,)
+        out2 = out.contiguous().view(batch_size,  self.num_anchors, 4, width, height,)
 
-        return out.contiguous().view(out.shape[0], -1, 4)
+        return out2.contiguous()#.view(out.shape[0], -1, 4)
 
 class ClassificationModel(nn.Module):
     def __init__(self, num_features_in, num_anchors=9, num_classes=80, prior=0.01, feature_size=256):
@@ -157,15 +161,15 @@ class ClassificationModel(nn.Module):
 
         out = self.output(out)
         out = self.output_act(out)
+        batch_size, channels, width, height = out.shape
 
         # out is B x C x W x H, with C = n_classes + n_anchors
-        out1 = out.permute(0, 2, 3, 1)
+        #out1 = out.permute(0, 2, 3, 1)
+        #batch_size, width, height, channels = out1.shape
 
-        batch_size, width, height, channels = out1.shape
+        out2 = out.contiguous().view(batch_size, self.num_classes, self.num_anchors, width, height,)
 
-        out2 = out1.view(batch_size, width, height, self.num_anchors, self.num_classes)
-
-        return out2.contiguous().view(x.shape[0], -1, self.num_classes)
+        return out2.contiguous()#.view(x.shape[0], -1, self.num_classes)
 
 #############################################################
 from warnings import warn
@@ -477,6 +481,19 @@ class ResNet(nn.Module):
         return [x2, x3, x4]
 
 #############################################################
+class EncToLogits(nn.Module):
+    def __init__(self, in_channels = 512, num_classes = 3):
+        super(EncToLogits, self).__init__()
+        intermediate_channels = 2*(int(math.sqrt(in_channels * num_classes))//2)
+        self.seq = nn.Sequential(
+                                nn.Conv2d(in_channels,intermediate_channels, 1),
+                                nn.ELU(),
+                                nn.Conv2d(intermediate_channels,num_classes, 1),
+                               )
+    def forward(self, inputs):
+        return self.seq(inputs)
+
+#############################################################
 
 def get_out_channels(layer):
     out_ch = None
@@ -514,10 +531,15 @@ class RetinaNet(nn.Module):
                         UNetDecode(256, hid_channels=self.fpn_sizes),
                         UpsampleBlock(in_channels = 256, out_channels=1+num_classes, steps=3)
                         )
-        self.fpn = PyramidFeatures(self.fpn_sizes[0], self.fpn_sizes[1], self.fpn_sizes[2])
 
-        self.regressionModel = RegressionModel(256)
-        self.classificationModel = ClassificationModel(256, num_classes=num_classes)
+        self.enc_to_logits  = nn.ModuleList([EncToLogits(n, num_classes+1) for n in self.fpn_sizes])
+        #self.fpn = PyramidFeatures(self.fpn_sizes[0], self.fpn_sizes[1], self.fpn_sizes[2])
+        #self.regressionModel = RegressionModel(256)
+        #self.classificationModel = ClassificationModel(256, num_classes=num_classes)
+        self.fpn = PyramidFeatures(*([num_classes+1]*3))
+
+        self.regressionModel = RegressionModel(num_classes+1)
+        self.classificationModel = ClassificationModel(num_classes+1, num_classes=num_classes)
 
         self.anchors = Anchors()
 
@@ -553,7 +575,8 @@ class RetinaNet(nn.Module):
         # Unet
 #         sem_segm = self.
         
-        features = self.fpn([x2, x3, x4])
+        features = [ e2l(x) for e2l, x in zip(self.enc_to_logits, [x2, x3, x4]) ]
+        #features = self.fpn([x2, x3, x4])
 
         if not self.no_semantic:
             sem_segm = self.decoder([x2, x3, x4])
