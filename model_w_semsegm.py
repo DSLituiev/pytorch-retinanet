@@ -26,6 +26,16 @@ model_urls = {
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
 
+def subsample_features(x, pyramid_levels):
+    pyramid_features = []
+    for ii in range(max(pyramid_levels)+1):
+        #print(ii, (ii in pyramid_levels), pyramid_levels)
+        if (ii in pyramid_levels):
+            pyramid_features.append(x)
+        x = nn.MaxPool2d(2)(x)
+    return pyramid_features
+
+
 class PyramidFeatures(nn.Module):
     def __init__(self, C3_size, C4_size, C5_size, feature_size=256):
         super(PyramidFeatures, self).__init__()
@@ -115,11 +125,13 @@ class RegressionModel(nn.Module):
 
         out = self.output(out)
 
+        #print("shape", out.shape)
         # out is B x C x W x H, with C = 4*num_anchors
-        out = out.permute(0, 2, 3, 1)
-        batch_size, width, height, channels = out.shape
+        batch_size, channels, width, height = out.shape
+        #out = out.permute(0, 2, 3, 1)
+        #batch_size, width, height, channels = out.shape
         #out2 = out.contiguous().view(batch_size, self.num_anchors, 4, width, height,)
-        out2 = out.contiguous().view(batch_size,  self.num_anchors, 4, width, height,)
+        out2 = out.contiguous().view(batch_size, 4, self.num_anchors, width, height,)
 
         return out2.contiguous()#.view(out.shape[0], -1, 4)
 
@@ -434,6 +446,7 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        #self.layer5 = self._make_layer(block, 128, 1, stride=2)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -478,7 +491,8 @@ class ResNet(nn.Module):
         x2 = self.layer2(x1)
         x3 = self.layer3(x2)
         x4 = self.layer4(x3)
-        return [x2, x3, x4]
+        #x5 = self.layer5(x4)
+        return [x2, x3, x4,]
 
 #############################################################
 class EncToLogits(nn.Module):
@@ -495,13 +509,6 @@ class EncToLogits(nn.Module):
 
 #############################################################
 
-def get_out_channels(layer):
-    out_ch = None
-    for la in layer[-1].children():
-        if hasattr(la,"out_channels"):
-            out_ch = la.out_channels
-    return out_ch
-
 class RetinaNet(nn.Module):
     def __init__(self, num_classes, block=Bottleneck, layers=[3, 4, 6, 3],
                  prior = 0.01,
@@ -509,11 +516,12 @@ class RetinaNet(nn.Module):
                  no_semantic=False,
                  ):
         super(RetinaNet, self).__init__()
-        
+        self.pyramid_levels = [3,4,5]
         self.no_rpn = no_rpn
         self.no_semantic = no_semantic
         self.encoder = ResNet(block=block, layers=layers)
-        self.fpn_sizes = [get_out_channels(getattr(self.encoder,"layer%d"%nn)) for nn in [2,3,4]]
+        self.fpn_sizes = [self.get_out_channels(getattr(self.encoder,"layer%d"%nn)) for nn in [2,3,4]]
+        #self.fpn_sizes.append([sz[-1]//2 for sz in self.fpn_sizes[-1]])
         print("fpn_sizes")
         print(*self.fpn_sizes, sep='\t')
 #         if block == BasicBlock:
@@ -528,7 +536,7 @@ class RetinaNet(nn.Module):
 
 #         self.decoder = UNetDecode(num_classes, hid_channels=fpn_sizes)
         self.decoder = nn.Sequential(
-                        UNetDecode(256, hid_channels=self.fpn_sizes),
+                        UNetDecode(256, hid_channels=self.fpn_sizes[:-1]),
                         UpsampleBlock(in_channels = 256, out_channels=1+num_classes, steps=3)
                         )
 
@@ -541,7 +549,7 @@ class RetinaNet(nn.Module):
         self.regressionModel = RegressionModel(num_classes+1)
         self.classificationModel = ClassificationModel(num_classes+1, num_classes=num_classes)
 
-        self.anchors = Anchors()
+        self.anchors = Anchors(pyramid_levels=self.pyramid_levels)
 
         self.regressBoxes = BBoxTransform()
 
@@ -554,7 +562,6 @@ class RetinaNet(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
-
         
         self.classificationModel.output.weight.data.fill_(0)
         self.classificationModel.output.bias.data.fill_(-math.log((1.0-prior)/prior))
@@ -570,22 +577,43 @@ class RetinaNet(nn.Module):
             if isinstance(layer, nn.BatchNorm2d):
                 layer.eval()
 
+    @classmethod
+    def collect_rpn_scores(cls, rpn_model, features):
+        classification = []
+        for feature in features:
+            res = rpn_model(feature)
+            res = res.reshape(res.shape[:3]+ (-1,))
+            classification.append(res)
+        num_channels_ = classification[0].shape[1]
+        classification = torch.cat(classification, dim=-1).\
+                            permute((0,3,2,1,)).\
+                            reshape(classification[0].shape[0],-1, num_channels_)
+        return classification
+
+    @classmethod
+    def get_out_channels(cls, layer):
+        out_ch = None
+        for la in layer[-1].children():
+            if hasattr(la,"out_channels"):
+                out_ch = la.out_channels
+        return out_ch
+
     def forward(self, img_batch):
         [x2, x3, x4] = self.encoder(img_batch)
-        # Unet
-#         sem_segm = self.
-        
-        features = [ e2l(x) for e2l, x in zip(self.enc_to_logits, [x2, x3, x4]) ]
-        #features = self.fpn([x2, x3, x4])
-
         if not self.no_semantic:
             sem_segm = self.decoder([x2, x3, x4])
+            features = subsample_features(sem_segm, self.pyramid_levels)
         else:
             sem_segm = None
+            features = [ e2l(x) for e2l, x in zip(self.enc_to_logits, [x2, x3, x4]) ]
+            #features = self.fpn([x2, x3, x4])
+            # features.append(nn.MaxPool2d(2)(features[-1]))
 
         if not self.no_rpn:
-            regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
-            classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
+            regression = self.collect_rpn_scores(self.regressionModel, features)
+            classification = self.collect_rpn_scores(self.classificationModel, features)
+            #regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
+            #classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
         else:
             regression = None
             classification = None
@@ -595,7 +623,7 @@ class RetinaNet(nn.Module):
             anchors = anchors.cuda()
 
         if self.training:
-            return [classification, regression, anchors, sem_segm]
+            return [classification, regression, anchors, sem_segm,]
         else:
             if not self.no_rpn:
                 transformed_anchors = self.regressBoxes(anchors, regression)

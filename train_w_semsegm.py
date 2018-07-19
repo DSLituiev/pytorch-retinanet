@@ -49,6 +49,7 @@ def main(args=None):
     parser.add_argument('--w-sem', help='weight for semantic segmentation branch', type=float, default=0.0)
     parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
+    parser.add_argument('--lr', help='initial learning rate', type=float, default=1e-5)
 
     parser = parser.parse_args(args)
     arghash = AttrDict(parser.__dict__).md5
@@ -129,7 +130,7 @@ def main(args=None):
 
     retinanet.training = True
 
-    optimizer = optim.Adam(retinanet.parameters(), lr=1e-5)
+    optimizer = optim.Adam(retinanet.parameters(), lr=parser.lr)
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True)
 
@@ -162,6 +163,7 @@ def main(args=None):
                 msk = data['mask']
                 nelements = msk.shape[-1] * msk.shape[-2]
                 annot = data['annot']
+                #print("ANNOT", annot.shape)
                 if use_gpu:
                     img = img.cuda()
                     msk = msk.cuda()
@@ -170,6 +172,7 @@ def main(args=None):
                     retinanet(img)
 
                 semantic_loss = semantic_xe(semantic, msk) #/ nelements
+                #print("semantic_loss", semantic_loss)
                 classification_loss, regression_loss =\
                     total_loss(classification, regression, 
                                anchors, annot)
@@ -194,7 +197,7 @@ def main(args=None):
                     np.mean(loss_hist)))
 
             except Exception as e:
-                #raise e
+                raise e
                 print(e)
                 #break
         
