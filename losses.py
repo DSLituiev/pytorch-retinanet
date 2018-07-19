@@ -180,9 +180,10 @@ class FocalLoss(nn.Module):
                 targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh))
                 targets = targets.t()
 
-                targets = targets/torch.Tensor([[0.1, 0.1, 0.2, 0.2]])
+                anch_w = torch.Tensor([[0.1, 0.1, 0.2, 0.2]])
                 if use_gpu:
-                    targets=targets.cuda()
+                    anch_w = anch_w.cuda()
+                targets = targets/anch_w
 
                 negative_indices = 1 - positive_indices
 
