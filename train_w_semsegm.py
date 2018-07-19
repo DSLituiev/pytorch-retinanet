@@ -122,7 +122,10 @@ def main(args=None):
         raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')        
 
     if parser.load:
-        retinanet = (torch.load(parser.load))
+        if use_gpu:
+            retinanet = torch.load(parser.load)
+        else:
+            retinanet = torch.load(parser.load, map_location='cpu')
         #retinanet.load_state_dict(torch.load(parser.load))
 
     if use_gpu:
