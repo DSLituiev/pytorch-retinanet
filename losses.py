@@ -51,21 +51,34 @@ def calc_iou(a, b):
     ih = torch.clamp(ih, min=0)
 
     ua = torch.unsqueeze((a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1]), dim=1) + area - iw * ih
-
     ua = torch.clamp(ua, min=1e-8)
 
     intersection = iw * ih
-
     IoU = intersection / ua
-
     return IoU
+
+def focal_loss(targets, classification, alpha = 0.25,
+               gamma=2.0,):
+    alpha_factor = torch.ones(targets.shape).cuda() * alpha
+
+    alpha_factor = torch.where(torch.eq(targets, 1.), alpha_factor, 1. - alpha_factor)
+    focal_weight = torch.where(torch.eq(targets, 1.), 1. - classification, classification)
+    focal_weight = alpha_factor * torch.pow(focal_weight, gamma)
+
+    bce = -(targets * torch.log(classification) + (1.0 - targets) * torch.log(1.0 - classification))
+    # cls_loss = focal_weight * torch.pow(bce, gamma)
+    cls_loss = focal_weight * bce
+    cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, torch.zeros(cls_loss.shape).cuda())
+    return cls_loss
 
 class FocalLoss(nn.Module):
     #def __init__(self):
 
-    def forward(self, classifications, regressions, anchors, annotations):
-        alpha = 0.25
-        gamma = 2.0
+    def forward(self, classifications, regressions, anchors, annotations,
+        alpha = 0.25,
+        gamma = 2.0,
+        ):
+
         batch_size = classifications.shape[0]
         classification_losses = []
         regression_losses = []
@@ -83,18 +96,24 @@ class FocalLoss(nn.Module):
             regression = regressions[j, :, :]
 
             ## Calculate IOU between ANNOTATIONS and ANCHORS
-            bbox_annotation = annotations[j, :, :]
-            bbox_annotation = bbox_annotation[bbox_annotation[:, 4] != -1]
+            if len(annotations.shape)>1:
+                bbox_annotation = annotations[j, :, :]
+                bbox_annotation = bbox_annotation[bbox_annotation[:, 4] != -1]
 
-            if bbox_annotation.shape[0] == 0:
+            if len(annotations.shape)==1 or bbox_annotation.shape[0] == 0:
+                "todo: penalize false positives using loss of the maximum or top-k predictions"
                 regression_losses.append(torch.tensor(0).float().cuda())
                 classification_losses.append(torch.tensor(0).float().cuda())
-
                 continue
 
             classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
 
             IoU = calc_iou(anchors[0, :, :], bbox_annotation[:, :4]) # num_anchors x num_annotations
+            #print("IoU", IoU.shape)
+            #print("anchors", anchors.shape)
+            #print("anchor", anchor.shape)
+            #print('bbox_annotation', bbox_annotation.shape)
+            #print('classification', classification.shape)
 
             IoU_max, IoU_argmax = torch.max(IoU, dim=1) # num_anchors x 1
             ## 
@@ -116,18 +135,8 @@ class FocalLoss(nn.Module):
             targets[positive_indices, :] = 0
             targets[positive_indices, assigned_annotations[positive_indices, 4].long()] = 1
 
-            alpha_factor = torch.ones(targets.shape).cuda() * alpha
-
-            alpha_factor = torch.where(torch.eq(targets, 1.), alpha_factor, 1. - alpha_factor)
-            focal_weight = torch.where(torch.eq(targets, 1.), 1. - classification, classification)
-            focal_weight = alpha_factor * torch.pow(focal_weight, gamma)
-
-            bce = -(targets * torch.log(classification) + (1.0 - targets) * torch.log(1.0 - classification))
-
-            # cls_loss = focal_weight * torch.pow(bce, gamma)
-            cls_loss = focal_weight * bce
-
-            cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, torch.zeros(cls_loss.shape).cuda())
+            cls_loss = focal_loss(targets, classification, alpha = 0.25,
+                                   gamma=2.0,)
 
             classification_losses.append(cls_loss.sum()/torch.clamp(num_positive_anchors.float(), min=1.0))
 
