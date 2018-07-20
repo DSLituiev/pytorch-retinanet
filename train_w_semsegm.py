@@ -25,6 +25,7 @@ from torch.utils.data import Dataset, DataLoader
 
 import coco_eval
 from attrdict import AttrDict
+from viz import plot_bboxes
 
 assert int(torch.__version__.split('.')[1]) >= 3
 
@@ -32,8 +33,8 @@ use_gpu = torch.cuda.is_available()
 print('CUDA available: {}'.format(use_gpu))
 
 
-def main(args=None):
-
+#def main(args=None):
+if __name__ == '__main__':
     parser     = argparse.ArgumentParser(description='Simple training script for training a RetinaNet network.')
 
     parser.add_argument('--dataset', help='Dataset type, must be one of csv or coco.')
@@ -51,7 +52,8 @@ def main(args=None):
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
     parser.add_argument('--lr', help='initial learning rate', type=float, default=1e-5)
 
-    parser = parser.parse_args(args)
+    parser = parser.parse_args()
+#    parser = parser.parse_args(args)
     arghash = AttrDict(parser.__dict__).md5
     print("argument hash:", arghash)
     
@@ -137,7 +139,8 @@ def main(args=None):
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True)
 
-    total_loss = losses.FocalLoss()
+    loss_func_bbox = losses.FocalLoss()
+    loss_func_semantic_xe = nn.CrossEntropyLoss(reduce=True, size_average=True)
 
     loss_hist = collections.deque(maxlen=500)
 
@@ -147,7 +150,6 @@ def main(args=None):
     print('Num training images: {}'.format(len(dataset_train)))
     logdir = "checkpoints/{}".format(arghash)
     os.makedirs(logdir, exist_ok=True)
-    semantic_xe = nn.CrossEntropyLoss(reduce=True, size_average=True)
 
     ndigits = int(np.ceil(np.log10(len(dataloader_train))))
     logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.5f} | Running: {:1.4f}'''  % ( ndigits, ndigits) 
@@ -171,13 +173,13 @@ def main(args=None):
                     img = img.cuda()
                     msk = msk.cuda()
                     annot = annot.cuda()
-                classification, regression, anchors, semantic =\
+                classifications, regressions, anchors, semantic =\
                     retinanet(img)
-
-                semantic_loss = semantic_xe(semantic, msk) #/ nelements
+                
+                semantic_loss = loss_func_semantic_xe(semantic, msk) #/ nelements
                 #print("semantic_loss", semantic_loss)
                 classification_loss, regression_loss =\
-                    total_loss(classification, regression, 
+                    loss_func_bbox(classifications, regressions, 
                                anchors, annot)
 
                 loss = parser.w_class * classification_loss + \
@@ -186,7 +188,7 @@ def main(args=None):
                 
                 if bool(loss == 0):
                     continue
-
+                
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(retinanet.parameters(), 0.1)
                 optimizer.step()
@@ -202,42 +204,22 @@ def main(args=None):
             except Exception as e:
                 raise e
                 print(e)
-                #break
+#                break
         
+        retinanet.eval()
+        coco_eval.evaluate_coco(dataset_train, retinanet, 
+                                use_gpu=use_gpu, use_n_samples=20, save=False,
+                                **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
         
         if parser.dataset == 'coco':
             print('Evaluating dataset')
-
-            coco_eval.evaluate_coco(dataset_val, retinanet)
-
+            coco_eval.evaluate_coco(dataset_val, retinanet,
+                                    use_gpu=use_gpu, save=False,
+                                    **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
+            
         elif parser.dataset == 'csv' and parser.csv_val is not None:
             print('Evaluating dataset')
-
-            total_loss_joint = 0.0
-            total_loss_classification = 0.0
-            total_loss_regression = 0.0
-
-            for iter_num, data in enumerate(dataloader_val):
-
-                if iter_num % 100 == 0:
-                    print('{}/{}'.format(iter_num, len(dataset_val)))
-
-                with torch.no_grad():
-                    annot = data['annot'].cuda()
-                    classification, regression, anchors = retinanet(data['img'].cuda().float())
-                    
-                    classification_loss, regression_loss = total_loss(classification, regression, anchors, annot)
-
-                    total_loss_joint += float(classification_loss + regression_loss)
-                    total_loss_regression += float(regression_loss)
-                    total_loss_classification += float(classification_loss)
-
-            total_loss_joint /= float(len(dataset_val))
-            total_loss_classification /= float(len(dataset_val))
-            total_loss_regression /= float(len(dataset_val))
-
-            print('Validation epoch: {} | Classification loss: {:1.5f} | Regression loss: {:1.5f} | Total loss: {:1.5f}'.format(epoch_num, float(total_loss_classification), float(total_loss_regression), float(total_loss_joint)))
-        
+            eval_csv(dataloader_val, retinanet, total_loss,)
         
         scheduler.step(np.mean(epoch_loss))    
 
@@ -247,5 +229,5 @@ def main(args=None):
 
     torch.save(retinanet, '{}/model_final.pt'.format(logdir, epoch_num))
 
-if __name__ == '__main__':
- main()
+#if __name__ == '__main__':
+#    main()
