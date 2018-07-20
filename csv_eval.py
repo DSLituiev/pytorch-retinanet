@@ -236,3 +236,32 @@ def evaluate(
     
     return average_precisions
 
+
+def eval_csv(dataloader_val, retinanet, total_loss, ):
+    """ has not been tested
+    """
+    total_loss_joint = 0.0
+    total_loss_classification = 0.0
+    total_loss_regression = 0.0
+
+    for iter_num, data in enumerate(dataloader_val):
+
+        if iter_num % 100 == 0:
+            print('{}/{}'.format(iter_num, len(dataset_val)))
+
+        with torch.no_grad():
+            annot = data['annot'].cuda()
+            classification, regression, anchors = retinanet(data['img'].cuda().float())
+            
+            classification_loss, regression_loss = total_loss(classification, regression, anchors, annot)
+
+            total_loss_joint += float(classification_loss + regression_loss)
+            total_loss_regression += float(regression_loss)
+            total_loss_classification += float(classification_loss)
+
+    total_loss_joint /= float(len(dataset_val))
+    total_loss_classification /= float(len(dataset_val))
+    total_loss_regression /= float(len(dataset_val))
+
+    print('Validation epoch: {} | Classification loss: {:1.5f} | Regression loss: {:1.5f} | Total loss: {:1.5f}'.format(epoch_num, float(total_loss_classification), float(total_loss_regression), float(total_loss_joint)))
+
