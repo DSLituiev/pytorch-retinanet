@@ -514,8 +514,10 @@ class RetinaNet(nn.Module):
                  prior = 0.01,
                  no_rpn = False,
                  no_semantic=False,
+                 squeeze=True,
                  ):
         super(RetinaNet, self).__init__()
+        self.squeeze = squeeze
         self.pyramid_levels = [3,4,5]
         self.no_rpn = no_rpn
         self.no_semantic = no_semantic
@@ -549,7 +551,7 @@ class RetinaNet(nn.Module):
         self.regressionModel = RegressionModel(num_classes+1)
         self.classificationModel = ClassificationModel(num_classes+1, num_classes=num_classes)
 
-        self.anchors = Anchors(pyramid_levels=self.pyramid_levels)
+        self.anchors = Anchors(pyramid_levels=self.pyramid_levels, squeeze=squeeze)
 
         self.regressBoxes = BBoxTransform()
 
@@ -600,6 +602,8 @@ class RetinaNet(nn.Module):
 
     def forward(self, img_batch):
         [x2, x3, x4] = self.encoder(img_batch)
+#        import ipdb
+#        ipdb.set_trace()
         if not self.no_semantic:
             sem_segm = self.decoder([x2, x3, x4])
             features = subsample_features(sem_segm, self.pyramid_levels)
@@ -610,8 +614,12 @@ class RetinaNet(nn.Module):
             # features.append(nn.MaxPool2d(2)(features[-1]))
 
         if not self.no_rpn:
-            regression = self.collect_rpn_scores(self.regressionModel, features)
-            classification = self.collect_rpn_scores(self.classificationModel, features)
+            if self.squeeze:
+                regression = self.collect_rpn_scores(self.regressionModel, features)
+                classification = self.collect_rpn_scores(self.classificationModel, features)
+            else:
+                regression = [self.regressionModel(f) for f in features]
+                classification = [self.classificationModel(f) for f in features]
             #regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
             #classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
         else:
