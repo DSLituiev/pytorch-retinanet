@@ -26,6 +26,7 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
                  use_n_samples = None
                  ):
     model.eval()
+    print("model.training", model.training)
 
     loss_func_bbox = losses.FocalLoss()
     loss_func_semantic_xe = nn.CrossEntropyLoss(reduce=True, size_average=True)
@@ -58,7 +59,12 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
             img = img.permute(2, 0, 1)
             msk_npy = data['mask'][np.newaxis]
             msk = torch.LongTensor(data['mask'][np.newaxis])
-            annot = torch.FloatTensor(data['annot'][np.newaxis])
+            annot = np.array(data['annot'][np.newaxis])
+            #print('annot', annot.dtype, annot.shape)
+            if annot.shape[1]>0:
+                annot = torch.FloatTensor(annot)
+            else:
+                annot = torch.ones((1, 1, 5)) * -1
 
             if use_gpu:
                 img = img.cuda()
@@ -146,7 +152,6 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
         if not len(results):
             return
 
-        print([type(x) for x in [mean_loss_total, mean_loss_class, mean_loss_regr, mean_loss_sem, mean_ious]])
         logstr = [ "Loss:\tTotal: {:.4f}\tClass: {:.4f}\tRegr: {:.4f}\tSemantic: {:.4f}" ] +\
                 ["\tIOU#{:d}: {{:.3f}}".format(n+1) for n in range(num_classes)]
         logstr = "".join(logstr)
@@ -162,7 +167,8 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
 
         # load results in COCO evaluation tool
         coco_true = dataset.coco
-        coco_pred = coco_true.loadRes('{}_bbox_results.json'.format(dataset.set_name))
+        coco_pred = coco_true.loadRes(results)
+        #coco_pred = coco_true.loadRes('{}_bbox_results.json'.format(dataset.set_name))
 
         # run COCO evaluation
         coco_eval = COCOeval(coco_true, coco_pred, 'bbox')

@@ -25,7 +25,7 @@ from torch.utils.data import Dataset, DataLoader
 
 import coco_eval
 from attrdict import AttrDict
-from viz import plot_bboxes
+#from viz import plot_bboxes
 
 assert int(torch.__version__.split('.')[1]) >= 3
 
@@ -160,6 +160,7 @@ if __name__ == '__main__':
         epoch_loss = []
         
         for iter_num, data in enumerate(dataloader_train):
+            #if iter_num>3: break
             try:
                 optimizer.zero_grad()
 
@@ -207,12 +208,14 @@ if __name__ == '__main__':
 #                break
         
         retinanet.eval()
+        print("EVAL ON TRAIN SET (20 samples)")
+        print("=" * 30)
         coco_eval.evaluate_coco(dataset_train, retinanet, 
                                 use_gpu=use_gpu, use_n_samples=20, save=False,
                                 **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
         
         if parser.dataset == 'coco':
-            print('Evaluating dataset')
+            print("EVAL ON VALIDATION SET")
             coco_eval.evaluate_coco(dataset_val, retinanet,
                                     use_gpu=use_gpu, save=False,
                                     **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})

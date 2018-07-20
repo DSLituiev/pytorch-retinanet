@@ -643,8 +643,8 @@ class RetinaNet(nn.Module):
 
                 if scores_over_thresh.sum() == 0:
                     # no boxes to NMS, just return
-                    return [torch.zeros(0), torch.zeros(0), torch.zeros(0, 4),
-                            sem_segm]
+                    return [classification, regression, anchors, sem_segm ] +\
+                        [torch.zeros(0), torch.zeros(0), torch.zeros(0, 4),]
 
                 classification_selected = classification[:, scores_over_thresh, :]
                 transformed_anchors = transformed_anchors[:, scores_over_thresh, :]
