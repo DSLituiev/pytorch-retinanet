@@ -54,7 +54,8 @@ if __name__ == '__main__':
 
     parser = parser.parse_args()
 #    parser = parser.parse_args(args)
-    arghash = AttrDict(parser.__dict__).md5
+    parser = AttrDict(parser.__dict__)
+    arghash = parser.md5
     print("argument hash:", arghash)
     
 
@@ -150,6 +151,7 @@ if __name__ == '__main__':
     print('Num training images: {}'.format(len(dataset_train)))
     logdir = "checkpoints/{}".format(arghash)
     os.makedirs(logdir, exist_ok=True)
+    parser.to_yaml(os.path.join(logdir, 'checkpoint.info'))
 
     ndigits = int(np.ceil(np.log10(len(dataloader_train))))
     logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.5f} | Running: {:1.4f}'''  % ( ndigits, ndigits) 

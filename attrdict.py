@@ -10,6 +10,8 @@ from collections import OrderedDict
 from collections import Counter
 from collections import Iterable
 
+import subprocess
+
 ####################################
 from hashlib import md5
 import json
@@ -59,6 +61,18 @@ class AttrDict(dict):
         #safedict = {kk: _convert_fun_(vv) for kk,vv in self.__dict__}
         with open(filename, "w+") as outfh:
                 json.dump(self.__dict__, outfh)
+
+    def add_git(self):
+        self.__dict__['git_hash'] = self.git_hash
+
+    @property
+    def git_hash(self):
+        process = subprocess.Popen(['git', 'rev-parse', 'HEAD'], stdout=subprocess.PIPE)
+        out, err = process.communicate()
+        if err is None:
+            return out.decode().rstrip()
+        else:
+            return RuntimeError(err)
 
     @property
     def md5(self):
