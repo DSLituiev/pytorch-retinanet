@@ -1,4 +1,9 @@
 from __future__ import print_function
+import six
+import csv
+from collections import deque
+from collections import OrderedDict
+from collections import Iterable
 
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
@@ -16,6 +21,10 @@ def upd_mean(mu_t_1, x, t):
     # zero-based indexing
     t += 1
     return mu_t_1 + (x - mu_t_1)/t
+
+
+def get_header(summary):
+    return ['='.join(x.split('=')[:-1]).strip() for x in summary.split('\n')]
 
 def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True, 
                  save = False,
@@ -179,4 +188,75 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
 
         model.train()
 
-        return
+        return coco_eval 
+
+
+class CSVLogger():
+    def __init__(self, filename, separator=',', append=False):
+        self.sep = separator
+        self.filename = filename
+        self.append = append
+        self.writer = None
+        self.keys = None
+        self.append_header = True
+        self.file_flags = 'b' if six.PY2 and os.name == 'nt' else ''
+        #super(CSVLogger, self).__init__()
+        self.on_train_begin()
+
+    def on_train_begin(self, logs=None):
+        if self.append:
+            if os.path.exists(self.filename):
+                with open(self.filename, 'r' + self.file_flags) as f:
+                    self.append_header = not bool(len(f.readline()))
+            self.csv_file = open(self.filename, 'a' + self.file_flags)
+        else:
+            self.csv_file = open(self.filename, 'w' + self.file_flags)
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+
+        def handle_value(k):
+            is_zero_dim_ndarray = isinstance(k, np.ndarray) and k.ndim == 0
+            if isinstance(k, six.string_types):
+                return k
+            elif isinstance(k, Iterable) and not is_zero_dim_ndarray:
+                return '"[%s]"' % (', '.join(map(str, k)))
+            else:
+                return k
+
+        if self.keys is None:
+            if isinstance(logs, OrderedDict):
+                self.keys = logs.keys()
+            elif isinstance(logs, dict):
+                self.keys = sorted(logs.keys())
+
+        print("keys", self.keys)
+        print("logs.keys", logs.keys())
+        if not self.writer:
+            class CustomDialect(csv.excel):
+                delimiter = self.sep
+
+            self.writer = csv.DictWriter(self.csv_file,
+                                         fieldnames=['epoch'] + self.keys, dialect=CustomDialect)
+            if self.append_header:
+                self.writer.writeheader()
+
+        row_dict = OrderedDict({'epoch': epoch})
+        row_dict.update((key, handle_value(logs[key])) for key in self.keys)
+        print(row_dict)
+        self.writer.writerow(row_dict)
+        self.csv_file.flush()
+
+    def __call__(self, *args, **kwargs):
+        return self.on_epoch_end(*args, **kwargs)
+
+    def on_train_end(self, logs=None):
+        self.csv_file.close()
+        self.writer = None
+
+    def __del__(self):
+        try:
+            self.on_train_end()
+        except:
+            pass
+

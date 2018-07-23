@@ -24,6 +24,8 @@ from dataloader import CocoDataset, CSVDataset, collater, Resizer, AspectRatioBa
 from torch.utils.data import Dataset, DataLoader
 
 import coco_eval
+from coco_eval import upd_mean
+from collections import OrderedDict
 from attrdict import AttrDict
 #from viz import plot_bboxes
 
@@ -47,6 +49,7 @@ if __name__ == '__main__':
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
     parser.add_argument('--batch-size', help='batch size', type=int, default=2)
     parser.add_argument('--epochs', help='Number of epochs', type=int, default=100)
+    parser.add_argument('--n_train_eval', help='Number training samples to evaluate AP/AR metrics on', type=int, default=5)
     parser.add_argument('--w-sem', help='weight for semantic segmentation branch', type=float, default=0.0)
     parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
@@ -55,6 +58,7 @@ if __name__ == '__main__':
     parser = parser.parse_args()
 #    parser = parser.parse_args(args)
     parser = AttrDict(parser.__dict__)
+    parser.add_git()
     arghash = parser.md5
     print("argument hash:", arghash)
     
@@ -155,14 +159,24 @@ if __name__ == '__main__':
 
     ndigits = int(np.ceil(np.log10(len(dataloader_train))))
     logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.5f} | Running: {:1.4f}'''  % ( ndigits, ndigits) 
+    logfile_train = os.path.join(logdir, "progress-train.csv")
+    logfile_val = os.path.join(logdir, "progress-val.csv")
+    epoch_logger_train = coco_eval.CSVLogger(logfile_train)
+    epoch_logger_val = coco_eval.CSVLogger(logfile_val)
     
+    coco_header = None
     for epoch_num in range(parser.epochs):
         retinanet.train()
         retinanet.freeze_bn()   
         epoch_loss = []
+        mean_loss_total = 0.0
+        mean_loss_class = 0.0
+        mean_loss_regr  = 0.0
+        mean_loss_sem   = 0.0
+        mean_ious       = [0.0]*dataset_train.num_classes()
         
         for iter_num, data in enumerate(dataloader_train):
-            #if iter_num>3: break
+            if iter_num>1: break
             try:
                 optimizer.zero_grad()
 
@@ -179,8 +193,8 @@ if __name__ == '__main__':
                 classifications, regressions, anchors, semantic =\
                     retinanet(img)
                 
-                semantic_loss = loss_func_semantic_xe(semantic, msk) #/ nelements
-                #print("semantic_loss", semantic_loss)
+                semantic_loss = loss_func_semantic_xe(semantic, msk)
+                iou_ = losses.sparse_iou_pt(msk, semantic, reduce=False).cpu().detach().tolist()
                 classification_loss, regression_loss =\
                     loss_func_bbox(classifications, regressions, 
                                anchors, annot)
@@ -188,6 +202,11 @@ if __name__ == '__main__':
                 loss = parser.w_class * classification_loss + \
                        parser.w_regr * regression_loss + \
                        parser.w_sem * semantic_loss
+                mean_loss_total = upd_mean(mean_loss_total, loss, iter_num)
+                mean_loss_class = upd_mean(mean_loss_class, classification_loss, iter_num)
+                mean_loss_regr  = upd_mean(mean_loss_regr, regression_loss, iter_num)
+                mean_loss_sem   = upd_mean(mean_loss_sem, semantic_loss, iter_num)
+                mean_ious       = [upd_mean(mu, float(iou__), iter_num) for mu, iou__ in zip(mean_ious, iou_)]
                 
                 if bool(loss == 0):
                     continue
@@ -203,29 +222,35 @@ if __name__ == '__main__':
                     float(classification_loss),
                     float(regression_loss), float(semantic_loss),
                     np.mean(loss_hist)))
-
             except Exception as e:
                 raise e
                 print(e)
 #                break
         
+        # print(epoch_num, float(mean_loss_total), float(mean_loss_class), float(mean_loss_regr), float(mean_loss_sem), *mean_ious, sep=',')
         retinanet.eval()
-        print("EVAL ON TRAIN SET (20 samples)")
+        print("EVAL ON TRAIN SET ({:d} samples)".format(parser.n_train_eval))
         print("=" * 30)
-        coco_eval.evaluate_coco(dataset_train, retinanet, 
-                                use_gpu=use_gpu, use_n_samples=20, save=False,
+        train_summary = coco_eval.evaluate_coco(dataset_train, retinanet, 
+                                use_gpu=use_gpu, use_n_samples=parser.n_train_eval, save=False,
                                 **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
+        print(train_summary)
+        if coco_header is None:
+            coco_header = coco_eval.get_header(s)
+        epoch_logger_train(OrderedDict(zip(coco_header, train_summary.stats)))
         
         if parser.dataset == 'coco':
             print("EVAL ON VALIDATION SET")
-            coco_eval.evaluate_coco(dataset_val, retinanet,
+            val_summary = coco_eval.evaluate_coco(dataset_val, retinanet,
                                     use_gpu=use_gpu, save=False,
                                     **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
+            print(val_summary)
+            epoch_logger_val(OrderedDict(zip(coco_header, val_summary.stats)))
             
         elif parser.dataset == 'csv' and parser.csv_val is not None:
             print('Evaluating dataset')
             eval_csv(dataloader_val, retinanet, total_loss,)
-        
+            
         scheduler.step(np.mean(epoch_loss))    
 
         torch.save(retinanet, '{}/retinanet_{}.pt'.format(logdir, epoch_num))
