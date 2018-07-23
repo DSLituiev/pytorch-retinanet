@@ -52,7 +52,7 @@ class AttrDict(dict):
             if use_pyaml:
                 try:
                     pyaml.dump(self.__dict__, outfh)
-                except yaml.representer.RepresenterError as ee:
+                except (NameError, yaml.representer.RepresenterError) as ee:
                     yaml.dump(self.__dict__, outfh, default_flow_style=False)
             else:
                 yaml.dump(self.__dict__, outfh, default_flow_style=False)
@@ -64,6 +64,23 @@ class AttrDict(dict):
 
     def add_git(self):
         self.__dict__['git_hash'] = self.git_hash
+        self.__dict__['git_hash'] = self.git_changes 
+
+    @property
+    def git_changes(self):
+        cmd = ['git', 'status', '--untracked-files=no',  '--porcelain']
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        out, err = process.communicate()
+        if err is None:
+            res = out.decode().rstrip().split('\n')
+            reslist = []
+            for x in res:
+                x = x.strip()
+                x = x.split(' ')
+                reslist.append( (x[-1], x[0]) )
+            return dict(reslist)
+        else:
+            return RuntimeError(err)
 
     @property
     def git_hash(self):
