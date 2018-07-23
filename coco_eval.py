@@ -47,6 +47,7 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
     mean_loss_regr  = 0.0 
     mean_loss_sem   = 0.0 
     mean_ious       = [0.0]*num_classes
+    mean_nboxes = 0.0
 
     if use_n_samples is None:
         use_n_samples = len(dataset)
@@ -111,6 +112,7 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
             mean_loss_sem   = upd_mean(mean_loss_sem, semantic_loss, index)
             mean_ious        = [upd_mean(mu, float(iou__), index) for mu, iou__ in zip(mean_ious, iou_)]
 
+            mean_nboxes = upd_mean(mean_nboxes, int(boxes.shape[0]), index)
             #print("iou", iou_)
             #if len(results_semantic)>1:
             #    break 
@@ -166,6 +168,7 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
         loss_summary_dict = OrderedDict([("loss_total", float(mean_loss_total)),
                                  ("loss_class", float(mean_loss_class)),
                                  ("loss_regr", float(mean_loss_regr)),
+                                 ('mean_nboxes', float(mean_nboxes)),
                                  ("loss_sem", float(mean_loss_sem)),])
         loss_summary_dict.update( {("iou_%d"%(ii+1)):vv for ii,vv in enumerate(mean_ious)} )
 
@@ -245,8 +248,6 @@ class CSVLogger():
             elif isinstance(logs, dict):
                 self.keys = sorted(logs.keys())
 
-        print("keys", self.keys)
-        print("logs.keys", logs.keys())
         if not self.writer:
             class CustomDialect(csv.excel):
                 delimiter = self.sep
@@ -258,7 +259,6 @@ class CSVLogger():
 
         row_dict = OrderedDict({'epoch': epoch})
         row_dict.update((key, handle_value(logs[key])) for key in self.keys)
-        print(row_dict)
         self.writer.writerow(row_dict)
         self.csv_file.flush()
 
