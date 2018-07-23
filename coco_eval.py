@@ -24,7 +24,7 @@ def upd_mean(mu_t_1, x, t):
 
 
 def get_header(summary):
-    return ['='.join(x.split('=')[:-1]).strip() for x in summary.split('\n')]
+    return ['='.join(x.split('=')[:-1]).strip() for x in str(summary).split('\n')]
 
 def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True, 
                  save = False,

@@ -49,7 +49,8 @@ if __name__ == '__main__':
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
     parser.add_argument('--batch-size', help='batch size', type=int, default=2)
     parser.add_argument('--epochs', help='Number of epochs', type=int, default=100)
-    parser.add_argument('--n_train_eval', help='Number training samples to evaluate AP/AR metrics on', type=int, default=5)
+    parser.add_argument('--n_train_eval', help='Number training samples to evaluate AP/AR metrics on', type=int,
+    default=20)
     parser.add_argument('--w-sem', help='weight for semantic segmentation branch', type=float, default=0.0)
     parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
@@ -176,7 +177,7 @@ if __name__ == '__main__':
         mean_ious       = [0.0]*dataset_train.num_classes()
         
         for iter_num, data in enumerate(dataloader_train):
-            if iter_num>1: break
+            #if iter_num>1: break
             try:
                 optimizer.zero_grad()
 
@@ -236,7 +237,7 @@ if __name__ == '__main__':
                                 **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
         print(train_summary)
         if coco_header is None:
-            coco_header = coco_eval.get_header(s)
+            coco_header = coco_eval.get_header(train_summary)
         epoch_logger_train(OrderedDict(zip(coco_header, train_summary.stats)))
         
         if parser.dataset == 'coco':
