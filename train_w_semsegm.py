@@ -247,7 +247,7 @@ if __name__ == '__main__':
             coco_header = list(set((train_apar_summary.keys())) - set(train_loss_summary_dict.keys()))
 #        print(train_apar_summary)
         train_apar_summary.update(train_loss_summary_dict)
-        epoch_logger_train(train_apar_summary)
+        epoch_logger_train(epoch_num, train_apar_summary)
         
         if parser.dataset == 'coco':
             print("EVAL ON VALIDATION SET")
@@ -255,7 +255,7 @@ if __name__ == '__main__':
                                     use_gpu=use_gpu, save=False, returntype='dict',
                                     **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
 #            print(val_summary)
-            epoch_logger_val(val_summary)
+            epoch_logger_val(epoch_num, val_summary)
             
         elif parser.dataset == 'csv' and parser.csv_val is not None:
             print('Evaluating dataset')
