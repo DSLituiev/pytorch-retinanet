@@ -32,7 +32,9 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
                  w_regr = 1.0,
                  w_sem = 1.0,
                  num_classes = 2,
-                 use_n_samples = None
+                 use_n_samples = None,
+                 returntype = 'dict',
+                 coco_header = None,
                  ):
     model.eval()
     print("model.training", model.training)
@@ -161,6 +163,12 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
         if not len(results):
             return
 
+        loss_summary_dict = OrderedDict([("loss_total", float(mean_loss_total)),
+                                 ("loss_class", float(mean_loss_class)),
+                                 ("loss_regr", float(mean_loss_regr)),
+                                 ("loss_sem", float(mean_loss_sem)),])
+        loss_summary_dict.update( {("iou_%d"%(ii+1)):vv for ii,vv in enumerate(mean_ious)} )
+
         logstr = [ "Loss:\tTotal: {:.4f}\tClass: {:.4f}\tRegr: {:.4f}\tSemantic: {:.4f}" ] +\
                 ["\tIOU#{:d}: {{:.3f}}".format(n+1) for n in range(num_classes)]
         logstr = "".join(logstr)
@@ -188,7 +196,14 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
 
         model.train()
 
-        return coco_eval 
+        if returntype == 'dict':
+            if coco_header is None:
+                coco_header = get_header(coco_eval)
+            apar_summary_dict = OrderedDict(zip(coco_header, coco_eval.stats))
+            loss_summary_dict.update(apar_summary_dict)
+            return loss_summary_dict
+        else:
+            return coco_eval, loss_summary_dict
 
 
 class CSVLogger():

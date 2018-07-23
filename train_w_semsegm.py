@@ -239,8 +239,10 @@ if __name__ == '__main__':
         print("=" * 30)
         train_apar_summary = coco_eval.evaluate_coco(dataset_train, retinanet, 
                                 use_gpu=use_gpu, use_n_samples=parser.n_train_eval, save=False,
-                                **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
-        print(train_summary)
+                                returntype='dict',
+                                **{kk:vv for kk,vv in parser.__dict__.items() if str(kk).startswith('w_')})
+        
+#        print(train_apar_summary)
         if coco_header is None:
             coco_header = coco_eval.get_header(train_apar_summary)
         train_apar_summary_dict = OrderedDict(zip(coco_header, train_apar_summary.stats))
@@ -250,10 +252,10 @@ if __name__ == '__main__':
         if parser.dataset == 'coco':
             print("EVAL ON VALIDATION SET")
             val_summary = coco_eval.evaluate_coco(dataset_val, retinanet,
-                                    use_gpu=use_gpu, save=False,
+                                    use_gpu=use_gpu, save=False, returntype='dict',
                                     **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
-            print(val_summary)
-            epoch_logger_val(OrderedDict(zip(coco_header, val_summary.stats)))
+#            print(val_summary)
+            epoch_logger_val(val_summary)
             
         elif parser.dataset == 'csv' and parser.csv_val is not None:
             print('Evaluating dataset')
