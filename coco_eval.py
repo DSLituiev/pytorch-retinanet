@@ -210,7 +210,7 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
 
 
 class CSVLogger():
-    def __init__(self, filename, separator=',', append=False):
+    def __init__(self, filename, separator=',', precision=4, append=False):
         self.sep = separator
         self.filename = filename
         self.append = append
@@ -218,6 +218,7 @@ class CSVLogger():
         self.keys = None
         self.append_header = True
         self.file_flags = 'b' if six.PY2 and os.name == 'nt' else ''
+        self.precision=precision
         #super(CSVLogger, self).__init__()
         self.on_train_begin()
 
@@ -239,12 +240,14 @@ class CSVLogger():
                 return k
             elif isinstance(k, Iterable) and not is_zero_dim_ndarray:
                 return '"[%s]"' % (', '.join(map(str, k)))
+            elif isinstance(k, float):
+                return "%.{}f".format(self.precision) % k
             else:
                 return k
 
         if self.keys is None:
             if isinstance(logs, OrderedDict):
-                self.keys = logs.keys()
+                self.keys = list(logs.keys())
             elif isinstance(logs, dict):
                 self.keys = sorted(logs.keys())
 
@@ -258,7 +261,8 @@ class CSVLogger():
                 self.writer.writeheader()
 
         row_dict = OrderedDict({'epoch': epoch})
-        row_dict.update((key, handle_value(logs[key])) for key in self.keys)
+        row_dict.update(((key, handle_value(logs[key])) if (key in logs) else (key, None))
+                            for key in self.keys)
         self.writer.writerow(row_dict)
         self.csv_file.flush()
 
