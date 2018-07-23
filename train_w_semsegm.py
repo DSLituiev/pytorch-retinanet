@@ -177,7 +177,7 @@ if __name__ == '__main__':
         mean_ious       = [0.0]*dataset_train.num_classes()
         
         for iter_num, data in enumerate(dataloader_train):
-            if iter_num>1: break
+            #if iter_num>1: break
             try:
                 optimizer.zero_grad()
 
