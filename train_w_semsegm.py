@@ -177,7 +177,7 @@ if __name__ == '__main__':
         mean_ious       = [0.0]*dataset_train.num_classes()
         
         for iter_num, data in enumerate(dataloader_train):
-            #if iter_num>1: break
+            if iter_num>1: break
             try:
                 optimizer.zero_grad()
 
@@ -237,13 +237,14 @@ if __name__ == '__main__':
         retinanet.eval()
         print("EVAL ON TRAIN SET ({:d} samples)".format(parser.n_train_eval))
         print("=" * 30)
-        if coco_header is None:
-            coco_header = coco_eval.get_header(train_apar_summary)
         train_apar_summary = coco_eval.evaluate_coco(dataset_train, retinanet, 
-                                use_gpu=use_gpu, use_n_samples=parser.n_train_eval, save=False,
-                                returntype='dict', coco_header = coco_header,
+                                use_gpu=use_gpu, use_n_samples=parser.n_train_eval,
+                                save=False,
+                                returntype='dict', coco_header=coco_header,
                                 **{kk:vv for kk,vv in parser.__dict__.items() if str(kk).startswith('w_')})
         
+        if coco_header is None:
+            coco_header = list(set((train_apar_summary.keys())) - set(train_loss_summary_dict.keys()))
 #        print(train_apar_summary)
         train_apar_summary.update(train_loss_summary_dict)
         epoch_logger_train(train_apar_summary)
