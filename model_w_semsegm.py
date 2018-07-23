@@ -650,7 +650,12 @@ class RetinaNet(nn.Module):
                 transformed_anchors = transformed_anchors[:, scores_over_thresh, :]
                 scores = scores[:, scores_over_thresh, :]
 
-                anchors_nms_idx = nms(torch.cat([transformed_anchors, scores], dim=2)[0, :, :], 0.5)
+                # the code here uses [x0, y0, h, w] format
+                # the NMS module accepts [x0, y0, x1, y1] format
+                transformed_anchors_coord = transformed_anchors.clone()
+                transformed_anchors_coord[...,2:] = transformed_anchors_coord[...,2:] + transformed_anchors[...,:2]
+
+                anchors_nms_idx = nms(torch.cat([transformed_anchors_coord, scores], dim=2)[0, :, :], 0.5)
 
                 nms_scores, nms_class = classification_selected[0, anchors_nms_idx, :].max(dim=1)
 
