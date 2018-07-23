@@ -237,17 +237,16 @@ if __name__ == '__main__':
         retinanet.eval()
         print("EVAL ON TRAIN SET ({:d} samples)".format(parser.n_train_eval))
         print("=" * 30)
+        if coco_header is None:
+            coco_header = coco_eval.get_header(train_apar_summary)
         train_apar_summary = coco_eval.evaluate_coco(dataset_train, retinanet, 
                                 use_gpu=use_gpu, use_n_samples=parser.n_train_eval, save=False,
-                                returntype='dict',
+                                returntype='dict', coco_header = coco_header,
                                 **{kk:vv for kk,vv in parser.__dict__.items() if str(kk).startswith('w_')})
         
 #        print(train_apar_summary)
-        if coco_header is None:
-            coco_header = coco_eval.get_header(train_apar_summary)
-        train_apar_summary_dict = OrderedDict(zip(coco_header, train_apar_summary.stats))
-        train_loss_summary_dict.update(train_apar_summary_dict)
-        epoch_logger_train(train_loss_summary_dict)
+        train_apar_summary.update(train_loss_summary_dict)
+        epoch_logger_train(train_apar_summary)
         
         if parser.dataset == 'coco':
             print("EVAL ON VALIDATION SET")
