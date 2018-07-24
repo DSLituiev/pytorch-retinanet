@@ -108,6 +108,29 @@ def focal_loss(targets, classification, alpha = 0.25,
     cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, zeros_)
     return cls_loss
 
+def focal_loss_detectron(target, logit,
+                         alpha = 0.25, gamma=2.0,):
+
+    use_gpu = targets.type().startswith('torch.cuda')
+    softplus = torch.nn.Softplus()
+    if use_gpu:
+        softplus = softplus.cuda()
+
+    logit_pos_flag = torch.ge(logit, 0.0)
+    p = torch.sigmoid(logit)
+
+    term1 = (1-p)**gamma * torch.log(p)
+    term2 = - p**gamma * \
+                torch.where(logit_pos_flag, 
+                            logit+softplus(-logit),
+                            softplus(logit))
+                
+    loss = - torch.where(target, 
+                alpha*term1,
+                (1-alpha) * term2)
+    return loss
+
+
 class FocalLoss(nn.Module):
     #def __init__(self):
 
