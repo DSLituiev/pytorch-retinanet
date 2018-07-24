@@ -185,7 +185,7 @@ class FocalLoss(nn.Module):
                 targets = targets.cuda()
 
             #targets[torch.lt(IoU_max, 0.4), :] = 0
-            #targets[torch.ge(IoU_max, 0.4), :] = 0
+            targets[torch.ge(IoU_max, 0.4), :] = 0.25
 
             positive_indices = torch.ge(IoU_max, 0.5)
 
@@ -195,11 +195,10 @@ class FocalLoss(nn.Module):
 
             targets[positive_indices, :] = 0
             targets[positive_indices, assigned_annotations[positive_indices, 4].long()] = 1
+            cls_loss = focal_loss_detectron(targets, classification, alpha = 0.25,
+                                  gamma=2.0,)
 
-            cls_loss = focal_loss(targets, classification, alpha = 0.25,
-                                   gamma=2.0,)
-
-            classification_losses.append(cls_loss.sum()/torch.clamp(num_positive_anchors.float(), min=1.0))
+            classification_losses.append(cls_loss.sum()/torch.clamp(num_positive_anchors.float(), min=0.01))
 
             # compute the loss for regression
 
