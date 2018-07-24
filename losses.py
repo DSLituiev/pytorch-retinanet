@@ -162,7 +162,7 @@ class FocalLoss(nn.Module):
                 targets = targets.cuda()
 
             #targets[torch.lt(IoU_max, 0.4), :] = 0
-            targets[torch.ge(IoU_max, 0.4), :] = 0
+            #targets[torch.ge(IoU_max, 0.4), :] = 0
 
             positive_indices = torch.ge(IoU_max, 0.5)
 
