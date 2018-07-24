@@ -150,18 +150,11 @@ class FocalLoss(nn.Module):
                 continue
 
             classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
-
+            """
+            This step can be pre-calculated and cached
+            """
             IoU = calc_iou(anchors[0, :, :], bbox_annotation[:, :4]) # num_anchors x num_annotations
-            #print("IoU", IoU.shape)
-            #print("anchors", anchors.shape)
-            #print("anchor", anchor.shape)
-            #print('bbox_annotation', bbox_annotation.shape)
-            #print('classification', classification.shape)
-
             IoU_max, IoU_argmax = torch.max(IoU, dim=1) # num_anchors x 1
-            ## 
-            #import pdb
-            #pdb.set_trace()
 
             # compute the loss for classification
             targets = torch.ones(classification.shape) * -1
@@ -169,6 +162,7 @@ class FocalLoss(nn.Module):
                 targets = targets.cuda()
 
             targets[torch.lt(IoU_max, 0.4), :] = 0
+#            targets[torch.ge(IoU_max, 0.4), :] = 0
 
             positive_indices = torch.ge(IoU_max, 0.5)
 
