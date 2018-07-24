@@ -64,7 +64,7 @@ class AttrDict(dict):
 
     def add_git(self):
         self.__dict__['git_hash'] = self.git_hash
-        self.__dict__['git_hash'] = self.git_changes 
+        self.__dict__['git_changes'] = self.git_changes 
 
     @property
     def git_changes(self):
@@ -94,6 +94,8 @@ class AttrDict(dict):
     @property
     def md5(self):
         txt = str([(kk, self.__dict__[kk]) for kk in sorted(self.__dict__.keys())])
+        print("md5 input")
+        print(txt)
         return md5(txt.encode()).hexdigest()
 
 
