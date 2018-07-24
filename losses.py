@@ -161,8 +161,8 @@ class FocalLoss(nn.Module):
             if use_gpu:
                 targets = targets.cuda()
 
-            targets[torch.lt(IoU_max, 0.4), :] = 0
-#            targets[torch.ge(IoU_max, 0.4), :] = 0
+            #targets[torch.lt(IoU_max, 0.4), :] = 0
+            targets[torch.ge(IoU_max, 0.4), :] = 0
 
             positive_indices = torch.ge(IoU_max, 0.5)
 
