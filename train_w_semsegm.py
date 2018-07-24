@@ -55,7 +55,9 @@ if __name__ == '__main__':
     parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
     parser.add_argument('--lr', help='initial learning rate', type=float, default=1e-5)
-
+    parser.add_argument('--overwrite', help='overwrite existing folder',
+                        dest='overwrite', action='store_true')
+   
     parser = parser.parse_args()
 #    parser = parser.parse_args(args)
     parser = AttrDict(parser.__dict__)
@@ -155,6 +157,8 @@ if __name__ == '__main__':
 
     print('Num training images: {}'.format(len(dataset_train)))
     logdir = "checkpoints/{}".format(arghash)
+    if (not parser.overwrite) and os.path.exists(logdir) and sum((1 for _ in os.scandir(logdir))):
+        raise RuntimeError("directory exists and non empty:\t%s" % logdir)
     os.makedirs(logdir, exist_ok=True)
     parser.to_yaml(os.path.join(logdir, 'checkpoint.info'))
 
