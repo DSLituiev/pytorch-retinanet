@@ -25,7 +25,9 @@ from PIL import Image
 class CocoDataset(Dataset):
     """Coco dataset."""
 
-    def __init__(self, root_dir, set_name='train2017', transform=None, sparse=True):
+    def __init__(self, root_dir, set_name='train2017',
+                 image_dir=None, coco_file=None,
+                 transform=None, sparse=True):
         """
         Args:
             root_dir (string): COCO directory.
@@ -36,8 +38,11 @@ class CocoDataset(Dataset):
         self.set_name = set_name
         self.transform = transform
         self.sparse = sparse
-
-        self.coco      = COCO(os.path.join(self.root_dir, 'annotations', 'instances_' + self.set_name + '.json'))
+        if image_dir is None:
+            self.image_dir = os.path.join(self.root_dir, 'images', self.set_name)
+        if coco_file is None:
+            coco_file = os.path.join(self.root_dir, 'annotations', 'instances_' + self.set_name + '.json')
+        self.coco      = COCO(coco_file)
         self.image_ids = self.coco.getImgIds()
 
         self.load_classes()
@@ -82,7 +87,7 @@ class CocoDataset(Dataset):
 
     def load_image(self, image_index):
         image_info = self.coco.loadImgs(self.image_ids[image_index])[0]
-        path       = os.path.join(self.root_dir, 'images', self.set_name, image_info['file_name'])
+        path       =  os.path.join(self.image_dir, image_info['file_name'])
         img = skimage.io.imread(path)
 
         if len(img.shape) == 2:

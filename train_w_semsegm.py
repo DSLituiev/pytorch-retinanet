@@ -40,6 +40,11 @@ if __name__ == '__main__':
     parser     = argparse.ArgumentParser(description='Simple training script for training a RetinaNet network.')
 
     parser.add_argument('--dataset', help='Dataset type, must be one of csv or coco.')
+    parser.add_argument('--train-tag', help='', default = 'train2017')
+    parser.add_argument('--val-tag', help='', default = 'val2017')
+    parser.add_argument('--train-json', help='', default = None)
+    parser.add_argument('--val-json', help='', default = None)
+    parser.add_argument('--image-dir', help='', default = None)
     parser.add_argument('--load', help='model checkpoint')
     parser.add_argument('--coco_path', help='Path to COCO directory')
     parser.add_argument('--csv_train', help='Path to file containing training annotations (see readme)')
@@ -70,11 +75,11 @@ if __name__ == '__main__':
         if parser.coco_path is None:
             raise ValueError('Must provide --coco_path when training on COCO,')
 
-        dataset_train = CocoDataset(parser.coco_path, set_name='train2017',
+        dataset_train = CocoDataset(parser.coco_path, set_name=parser.train_tag,
                                    transform=transforms.Compose([Normalizer(), Augmenter(), 
                                 #Resizer()
                                 ]))
-        dataset_val = CocoDataset(parser.coco_path, set_name='val2017', 
+        dataset_val = CocoDataset(parser.coco_path, set_name=parser.val_tag, 
                                   transform=transforms.Compose([Normalizer(), 
                                   #Resizer()
                                   ]))
