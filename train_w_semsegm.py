@@ -149,8 +149,10 @@ if __name__ == '__main__':
 
     if parser.no_rpn:
         retinanet.no_rpn = True
+        logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Sem: {:1.5f} | Running: {:1.4f} |'''  % ( ndigits, ndigits) 
     else:
         retinanet.no_rpn = False
+        logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.5f} | Running: {:1.4f}'''  % ( ndigits, ndigits) 
 
     retinanet.training = True
 
@@ -174,7 +176,7 @@ if __name__ == '__main__':
     parser.to_yaml(os.path.join(logdir, 'checkpoint.info'))
 
     ndigits = int(np.ceil(np.log10(len(dataloader_train))))
-    logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Class: {:1.4f} | Regr: {:1.4f} | Sem: {:1.5f} | Running: {:1.4f}'''  % ( ndigits, ndigits) 
+    
     logfile_train = os.path.join(logdir, "progress-train.csv")
     logfile_val = os.path.join(logdir, "progress-val.csv")
     epoch_logger_train = coco_eval.CSVLogger(logfile_train)
@@ -241,10 +243,17 @@ if __name__ == '__main__':
                 loss_hist.append(float(loss))
                 epoch_loss.append(float(loss))
 
-                print( logstr.format(epoch_num, iter_num, len(dataloader_train),
-                    float(classification_loss),
-                    float(regression_loss), float(semantic_loss),
-                    np.mean(loss_hist)))
+                if parser.no_rpn:
+                    print(logstr.format(epoch_num, iter_num, len(dataloader_train),
+                                         float(semantic_loss),
+                                         np.mean(loss_hist),
+                                         ))
+                else:
+                    print(logstr.format(epoch_num, iter_num, len(dataloader_train),
+                        float(classification_loss),
+                        float(regression_loss), float(semantic_loss),
+                        np.mean(loss_hist)))
+                    
             except Exception as e:
                 raise e
                 print(e)
