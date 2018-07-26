@@ -52,7 +52,9 @@ class AttrDict(dict):
             if use_pyaml:
                 try:
                     pyaml.dump(self.__dict__, outfh)
-                except (NameError, yaml.representer.RepresenterError) as ee:
+                #except (NameError, yaml.representer.RepresenterError) as ee:
+                except Exception as ee:
+                    print(ee)
                     yaml.dump(self.__dict__, outfh, default_flow_style=False)
             else:
                 yaml.dump(self.__dict__, outfh, default_flow_style=False)

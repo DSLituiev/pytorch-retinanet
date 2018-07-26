@@ -1,6 +1,9 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from functools import partial
+from utils import BBoxInvTransform
+
 
 def iou_per_channel_np(mask, pred, stabilize = 1e-12):
     """
@@ -13,6 +16,7 @@ def iou_per_channel_np(mask, pred, stabilize = 1e-12):
     intersection = np.sum(np.logical_and(mask, pred))
     iou = (intersection+stabilize)/(union+stabilize)
     return iou
+
 
 def sparse_iou_np(mask, pred, skip_bg = True,
                   reduce=True,
@@ -32,6 +36,7 @@ def sparse_iou_np(mask, pred, skip_bg = True,
     if reduce:
         iou_ = np.sum(iou_)
     return iou_
+
 
 def iou_per_channel_pt(mask_channel, prob_channel, stabilize = 1e-12):
     """
@@ -69,7 +74,6 @@ def calc_iou(a, b):
     a -- anchors
     b -- annotations
     """
-
     area = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
 
     iw = torch.min(torch.unsqueeze(a[:, 2], dim=1), b[:, 2]) -\
@@ -108,37 +112,117 @@ def focal_loss(targets, classification, alpha = 0.25,
     cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, zeros_)
     return cls_loss
 
+
+def focal_loss_detectron(target, logit,
+                         alpha = 0.25, gamma=2.0,):
+
+    use_gpu = target.type().startswith('torch.cuda')
+    softplus = torch.nn.Softplus()
+    if use_gpu:
+        softplus = softplus.cuda()
+
+    logit_pos_flag = torch.ge(logit, 0.0)
+    p = torch.sigmoid(logit)
+
+    term1 = (1-p)**gamma * torch.log(p)
+    term2 = - p**gamma * \
+                torch.where(logit_pos_flag, 
+                            logit+softplus(-logit),
+                            softplus(logit))
+                
+    loss = - torch.where(torch.gt(target,0), alpha*term1, torch.tensor(0.0)) \
+           - torch.where(torch.lt(target,0), (1-alpha)*term2, torch.tensor(0.0))
+    return loss
+
+
+def intersect_annot_anchors(anchors, bbox_annotation, num_classes=2,
+                            thr_iou_lo=0.4):
+    if bbox_annotation.shape[0] == 0:
+        return None, None, None
+    use_gpu = anchors.type().startswith('torch.cuda')
+    anchor = anchors[0, :, :]
+    
+    IoU = calc_iou(anchor[:, :], bbox_annotation[:, :4]) 
+    # num_anchors x num_annotations
+    IoU_max, IoU_argmax = torch.max(IoU, dim=1) # num_anchors x 1
+
+    targets = torch.ones((int(anchor.shape[0]), num_classes)) * -1
+    if use_gpu:
+        targets = targets.cuda()
+
+    # CLASSIFICATION TARGETS
+    targets[torch.ge(IoU_max, thr_iou_lo), :] = 0.0
+
+    positive_indices = torch.ge(IoU_max, 0.5)
+    num_positive_anchors = positive_indices.sum()
+
+    assigned_annotations = bbox_annotation[IoU_argmax, :]
+    assigned_annotations = assigned_annotations[positive_indices, :]
+
+    targets[positive_indices, :] = 0.0
+    targets[positive_indices, assigned_annotations[:, 4].long()] = 1
+
+    # REGRESSION TARGETS
+    bbit = BBoxInvTransform()
+    regr_targets = bbit(anchor)
+    return targets, regr_targets, positive_indices
+
+
+def regr_loss(targets, predictions, reduce=False,
+              thr = 0.1):
+    #regression_loss = torch.abs(regr_targets - regression[positive_indices, :])
+    regression_diff = torch.abs(targets - predictions)
+    # HINGE LOSS
+    regression_loss = torch.where(
+        torch.le(regression_diff, thr),
+        0.5/thr * torch.pow(regression_diff, 2),
+        regression_diff - 0.5 * thr
+        )
+    if reduce:
+        return regression_loss.mean()
+    else:
+        return regression_loss
+
+
 class FocalLoss(nn.Module):
-    #def __init__(self):
+    def __init__(self, num_classes=2, alpha=0.25, gamma=2.0,
+                 regr_loss = regr_loss,
+                 class_loss = focal_loss,):
+        super(FocalLoss, self).__init__()
+        self.num_classes = num_classes
+        self.alpha = alpha
+        self.gamma = gamma
+        self.class_loss = partial(class_loss, alpha=0.25, gamma=2.0)
+        self.regr_loss = regr_loss
 
-    def forward(self, classifications, regressions, anchors, annotations,
-        alpha = 0.25,
-        gamma = 2.0,
-        ):
-        use_gpu = classifications.type().startswith('torch.cuda')
+    def forward(self, class_logits, regr_preds, anchors, annotations, ):
+        use_gpu = class_logits.type().startswith('torch.cuda')
 
-        batch_size = classifications.shape[0]
+        batch_size = class_logits.shape[0]
         classification_losses = []
         regression_losses = []
 
         anchor = anchors[0, :, :]
-
-        anchor_widths  = anchor[:, 2] - anchor[:, 0]
-        anchor_heights = anchor[:, 3] - anchor[:, 1]
-        anchor_ctr_x   = anchor[:, 0] + 0.5 * anchor_widths
-        anchor_ctr_y   = anchor[:, 1] + 0.5 * anchor_heights
-
+        if class_logits.shape[-1] != self.num_classes:
+            self.num_classes = class_logits.shape[-1]
+            print("updated self.num_classes to %d" % int(class_logits.shape[-1]))
+        
         for j in range(batch_size):
-
-            classification = classifications[j, :, :]
-            regression = regressions[j, :, :]
 
             ## Calculate IOU between ANNOTATIONS and ANCHORS
             if len(annotations.shape)>1:
                 bbox_annotation = annotations[j, :, :]
                 bbox_annotation = bbox_annotation[bbox_annotation[:, 4] != -1]
+                """
+                This step can be pre-calculated and cached
+                """
+                targets, regr_targets, positive_indices = \
+                    intersect_annot_anchors(anchors, bbox_annotation,
+                                            num_classes=self.num_classes)
+            else:
+                targets = None
 
-            if len(annotations.shape)==1 or bbox_annotation.shape[0] == 0:
+            if targets is None:
                 "todo: penalize false positives using loss of the maximum or top-k predictions"
                 if use_gpu:
                     regression_losses.append(torch.tensor(0).float().cuda())
@@ -146,79 +230,22 @@ class FocalLoss(nn.Module):
                 else:
                     regression_losses.append(torch.tensor(0).float())
                     classification_losses.append(torch.tensor(0).float())
-
                 continue
 
-            classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
-            """
-            This step can be pre-calculated and cached
-            """
-            IoU = calc_iou(anchors[0, :, :], bbox_annotation[:, :4]) # num_anchors x num_annotations
-            IoU_max, IoU_argmax = torch.max(IoU, dim=1) # num_anchors x 1
 
-            # compute the loss for classification
-            targets = torch.ones(classification.shape) * -1
-            if use_gpu:
-                targets = targets.cuda()
+            class_logits_sample = class_logits[j, :, :]
+            regr_preds_sample = regr_preds[j, :, :]
+            class_logits_sample = torch.clamp(class_logits_sample, 1e-4, 1.0 - 1e-4)
+            cls_loss = self.class_loss(targets, class_logits_sample)
 
-            #targets[torch.lt(IoU_max, 0.4), :] = 0
-            targets[torch.ge(IoU_max, 0.4), :] = 0
+            # torch has no dimension/axis argument for any()
+            num_positive_anchors = (((targets>0.0).sum(1)>0).sum()).float()
+            classification_losses.append(cls_loss.sum()/torch.clamp(num_positive_anchors, min=0.01))
 
-            positive_indices = torch.ge(IoU_max, 0.5)
-
-            num_positive_anchors = positive_indices.sum()
-
-            assigned_annotations = bbox_annotation[IoU_argmax, :]
-
-            targets[positive_indices, :] = 0
-            targets[positive_indices, assigned_annotations[positive_indices, 4].long()] = 1
-
-            cls_loss = focal_loss(targets, classification, alpha = 0.25,
-                                   gamma=2.0,)
-
-            classification_losses.append(cls_loss.sum()/torch.clamp(num_positive_anchors.float(), min=1.0))
-
-            # compute the loss for regression
-
-            if positive_indices.sum() > 0:
-                assigned_annotations = assigned_annotations[positive_indices, :]
-
-                anchor_widths_pi = anchor_widths[positive_indices]
-                anchor_heights_pi = anchor_heights[positive_indices]
-                anchor_ctr_x_pi = anchor_ctr_x[positive_indices]
-                anchor_ctr_y_pi = anchor_ctr_y[positive_indices]
-
-                gt_widths  = assigned_annotations[:, 2] - assigned_annotations[:, 0]
-                gt_heights = assigned_annotations[:, 3] - assigned_annotations[:, 1]
-                gt_ctr_x   = assigned_annotations[:, 0] + 0.5 * gt_widths
-                gt_ctr_y   = assigned_annotations[:, 1] + 0.5 * gt_heights
-
-                # clip widths to 1
-                gt_widths  = torch.clamp(gt_widths, min=1)
-                gt_heights = torch.clamp(gt_heights, min=1)
-
-                targets_dx = (gt_ctr_x - anchor_ctr_x_pi) / anchor_widths_pi
-                targets_dy = (gt_ctr_y - anchor_ctr_y_pi) / anchor_heights_pi
-                targets_dw = torch.log(gt_widths / anchor_widths_pi)
-                targets_dh = torch.log(gt_heights / anchor_heights_pi)
-
-                targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh))
-                targets = targets.t()
-
-                anch_w = torch.Tensor([[0.1, 0.1, 0.2, 0.2]])
-                if use_gpu:
-                    anch_w = anch_w.cuda()
-                targets = targets/anch_w
-
-                negative_indices = 1 - positive_indices
-
-                regression_diff = torch.abs(targets - regression[positive_indices, :])
-
-                regression_loss = torch.where(
-                    torch.le(regression_diff, 1.0 / 9.0),
-                    0.5 * 9.0 * torch.pow(regression_diff, 2),
-                    regression_diff - 0.5 / 9.0
-                )
+            # compute the loss for regr_preds_sample
+            if num_positive_anchors > 0:
+                #regression_loss = torch.abs(regr_targets - regr_preds_sample[positive_indices, :])
+                regression_loss = regr_loss(regr_targets, regr_preds_sample[positive_indices, :])
                 regression_losses.append(regression_loss.mean())
             else:
                 zero_loss = torch.tensor(0).float()

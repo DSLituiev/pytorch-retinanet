@@ -83,17 +83,15 @@ class BBoxTransform(nn.Module):
         super(BBoxTransform, self).__init__()
         self.mean = mean
         self.std = std
-
-    def forward(self, boxes, deltas):
         if self.mean is None:
             self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32))
         if self.std is None:
             self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
 
+    def forward(self, boxes, deltas):
         if deltas.type().startswith('torch.cuda'):
             self.std = self.std.cuda()
             self.mean = self.mean.cuda()
-
         widths  = boxes[:, :, 2] - boxes[:, :, 0]
         heights = boxes[:, :, 3] - boxes[:, :, 1]
         ctr_x   = boxes[:, :, 0] + 0.5 * widths
@@ -117,6 +115,52 @@ class BBoxTransform(nn.Module):
         pred_boxes = torch.stack([pred_boxes_x1, pred_boxes_y1, pred_boxes_x2, pred_boxes_y2], dim=2)
 
         return pred_boxes
+
+
+class BBoxInvTransform(nn.Module):
+    """Inverse """
+    def __init__(self, mean=None, std=None, cuda=False):
+        super(BBoxInvTransform, self).__init__()
+        self.mean = mean
+        self.std = std
+        if self.mean is None:
+            self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32))
+        else:
+            NotImplementedError("non-zero mean handling is not implemented ")
+        if self.std is None:
+            self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
+
+    def forward(self, anchor):
+        if anchor.type().startswith('torch.cuda'):
+            self.std = self.std.cuda()
+            self.mean = self.mean.cuda()
+        anchor_widths  = anchor[:, 2] - anchor[:, 0]
+        anchor_heights = anchor[:, 3] - anchor[:, 1]
+        anchor_ctr_x   = anchor[:, 0] + 0.5 * anchor_widths
+        anchor_ctr_y   = anchor[:, 1] + 0.5 * anchor_heights
+
+        anchor_widths_pi = anchor_widths
+        anchor_heights_pi = anchor_heights
+        anchor_ctr_x_pi = anchor_ctr_x
+        anchor_ctr_y_pi = anchor_ctr_y
+
+        gt_widths  = assigned_annotations[:, 2] - assigned_annotations[:, 0]
+        gt_heights = assigned_annotations[:, 3] - assigned_annotations[:, 1]
+        gt_ctr_x   = assigned_annotations[:, 0] + 0.5 * gt_widths
+        gt_ctr_y   = assigned_annotations[:, 1] + 0.5 * gt_heights
+
+        # clip widths to 1
+        gt_widths  = torch.clamp(gt_widths, min=1)
+        gt_heights = torch.clamp(gt_heights, min=1)
+
+        targets_dx = (gt_ctr_x - anchor_ctr_x_pi) / anchor_widths_pi
+        targets_dy = (gt_ctr_y - anchor_ctr_y_pi) / anchor_heights_pi
+        targets_dw = torch.log(gt_widths / anchor_widths_pi)
+        targets_dh = torch.log(gt_heights / anchor_heights_pi)
+
+        regr_targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh)).t()
+        regr_targets = regr_targets / self.std
+        return regr_targets
 
 
 class ClipBoxes(nn.Module):
