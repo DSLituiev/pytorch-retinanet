@@ -5,6 +5,19 @@ from functools import partial
 from utils import BBoxInvTransform
 
 
+
+def get_semantic_metrics(semantic_logits, msk, 
+        loss_func_semantic_xe=nn.CrossEntropyLoss(reduce=True, size_average=True),
+        ):
+	# SEMANTIC SEGMENTATION
+	semantic_loss = loss_func_semantic_xe(semantic_logits, msk) #/ nelements
+	## CONVERT LOGITS TO PROBABLILITIES
+	semantic_prob = nn.Softmax2d()(semantic_logits)
+	semantic_prob = semantic_prob.detach()#.cpu().numpy()
+	iou_ = sparse_iou_pt(msk, semantic_prob, reduce=False).cpu().detach().tolist()
+	return semantic_loss, iou_
+
+
 def iou_per_channel_np(mask, pred, stabilize = 1e-12):
     """
     Input:

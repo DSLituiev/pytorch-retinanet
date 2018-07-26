@@ -168,7 +168,8 @@ if __name__ == '__main__':
 
     print('Num training images: {}'.format(len(dataset_train)))
     logdir = "checkpoints/{}".format(arghash)
-    if (not parser.overwrite) and os.path.exists(logdir) and sum((1 for _ in os.scandir(logdir))):
+    if (not parser.overwrite) and os.path.exists(logdir) and \
+            sum((1 for x in os.scandir(logdir) if x.name.endswith('.pt'))):
         raise RuntimeError("directory exists and non empty:\t%s" % logdir)
     os.makedirs(logdir, exist_ok=True)
     parser.to_yaml(os.path.join(logdir, 'checkpoint.info'))
@@ -206,11 +207,12 @@ if __name__ == '__main__':
                     img = img.cuda()
                     msk = msk.cuda()
                     annot = annot.cuda()
-                classifications, regressions, anchors, semantic =\
+                classifications, regressions, anchors, semantic_logits =\
                     retinanet(img)
                 
-                semantic_loss = loss_func_semantic_xe(semantic, msk)
-                iou_ = losses.sparse_iou_pt(msk, semantic, reduce=False).cpu().detach().tolist()
+                semantic_loss, iou_ = losses.get_semantic_metrics(semantic_logits, msk,
+                                                                  loss_func_semantic_xe=loss_func_semantic_xe)
+
                 if not retinanet.no_rpn:
                     classification_loss, regression_loss =\
                         loss_func_bbox(classifications, regressions, 
@@ -249,7 +251,7 @@ if __name__ == '__main__':
                 raise e
                 print(e)
 #                break
-        del data, msk, semantic, img
+        del data, msk, semantic_logits, semantic_prob, img
         # print(epoch_num, float(mean_loss_total), float(mean_loss_class), float(mean_loss_regr), float(mean_loss_sem), *mean_ious, sep=',')
         train_loss_summary_dict = OrderedDict([("loss_total", float(mean_loss_total)),
          ("loss_class", float(mean_loss_class)),
@@ -294,11 +296,12 @@ if __name__ == '__main__':
                     if use_gpu:
                         img = img.cuda()
                         msk = msk.cuda()
-                    _,_,_, semantic =\
+                    _,_,_, semantic_logits =\
                         retinanet(img)
                     del _
-                    semantic_loss = loss_func_semantic_xe(semantic, msk)
-                    iou_ = losses.sparse_iou_pt(msk, semantic, reduce=False).cpu().detach().tolist()
+
+                    semantic_loss, iou_ = losses.get_semantic_metrics(semantic_logits, msk)
+
                     mean_loss_sem   = upd_mean(mean_loss_sem, semantic_loss, iter_num)
                     mean_ious       = [upd_mean(mu, float(iou__), iter_num) for mu, iou__ in zip(mean_ious, iou_)]
                 val_summary = OrderedDict([
