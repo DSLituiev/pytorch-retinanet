@@ -155,6 +155,8 @@ def intersect_annot_anchors(anchors, bbox_annotation, num_classes=2,
 
     positive_indices = torch.ge(IoU_max, 0.5)
     num_positive_anchors = positive_indices.sum()
+    if num_positive_anchors == 0:
+        return None, None, None
 
     assigned_annotations = bbox_annotation[IoU_argmax, :]
     assigned_annotations = assigned_annotations[positive_indices, :]
