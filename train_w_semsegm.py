@@ -57,6 +57,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_train_eval', help='Number training samples to evaluate AP/AR metrics on', type=int,
     default=20)
     parser.add_argument('--w-sem', help='weight for semantic segmentation branch', type=float, default=0.0)
+    parser.add_argument('--no-rpn', help='train only semantic segmentation, NOT RPN', action='store_true')
     parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
     parser.add_argument('--lr', help='initial learning rate', type=float, default=1e-5)
@@ -120,7 +121,7 @@ if __name__ == '__main__':
 
     if dataset_val is not None:
         sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=parser.batch_size, drop_last=False)
-        dataloader_val = DataLoader(dataset_val, num_workers=1, collate_fn=collater, batch_sampler=sampler_val)
+        dataloader_val = DataLoader(dataset_val, num_workers=4, collate_fn=collater, batch_sampler=sampler_val)
 
     # Create the model
     if parser.depth == 18:
@@ -145,6 +146,11 @@ if __name__ == '__main__':
 
     if use_gpu:
         retinanet = retinanet.cuda()
+
+    if parser.no_rpn:
+        retinanet.no_rpn = True
+    else:
+        retinanet.no_rpn = False
 
     retinanet.training = True
 
@@ -205,13 +211,20 @@ if __name__ == '__main__':
                 
                 semantic_loss = loss_func_semantic_xe(semantic, msk)
                 iou_ = losses.sparse_iou_pt(msk, semantic, reduce=False).cpu().detach().tolist()
-                classification_loss, regression_loss =\
-                    loss_func_bbox(classifications, regressions, 
-                               anchors, annot)
+                if not retinanet.no_rpn:
+                    classification_loss, regression_loss =\
+                        loss_func_bbox(classifications, regressions, 
+                                   anchors, annot)
+                else:
+                    if use_gpu:
+                        classification_loss = regression_loss = torch.tensor(0.0).cuda()
+                    else:
+                        classification_loss = regression_loss = torch.tensor(0.0)
 
                 loss = parser.w_class * classification_loss + \
                        parser.w_regr * regression_loss + \
                        parser.w_sem * semantic_loss
+
                 mean_loss_total = upd_mean(mean_loss_total, loss, iter_num)
                 mean_loss_class = upd_mean(mean_loss_class, classification_loss, iter_num)
                 mean_loss_regr  = upd_mean(mean_loss_regr, regression_loss, iter_num)
@@ -236,39 +249,66 @@ if __name__ == '__main__':
                 raise e
                 print(e)
 #                break
-        
+        del data, msk, semantic, img
         # print(epoch_num, float(mean_loss_total), float(mean_loss_class), float(mean_loss_regr), float(mean_loss_sem), *mean_ious, sep=',')
         train_loss_summary_dict = OrderedDict([("loss_total", float(mean_loss_total)),
          ("loss_class", float(mean_loss_class)),
          ("loss_regr", float(mean_loss_regr)),
          ("loss_sem", float(mean_loss_sem)),])
-        train_loss_summary_dict.update( {("iou_%d"%(ii+1)):vv for ii,vv in enumerate(mean_ious)} )
+        for ii,vv in enumerate(mean_ious):
+            train_loss_summary_dict[("iou_%d"%(ii+1))]=vv
         retinanet.eval()
         print("EVAL ON TRAIN SET ({:d} samples)".format(parser.n_train_eval))
         print("=" * 30)
-        train_apar_summary = coco_eval.evaluate_coco(dataset_train, retinanet, 
-                                use_gpu=use_gpu, use_n_samples=parser.n_train_eval,
-                                save=False,
-                                returntype='dict', coco_header=coco_header,
-                                **{kk:vv for kk,vv in parser.__dict__.items() if str(kk).startswith('w_')})
-        
-        if coco_header is None:
-            coco_header = list(set((train_apar_summary.keys())) - set(train_loss_summary_dict.keys()))
-#        print(train_apar_summary)
-        train_apar_summary.update(train_loss_summary_dict)
+        if not retinanet.no_rpn:
+            train_apar_summary = coco_eval.evaluate_coco(dataset_train, retinanet, 
+                                    use_gpu=use_gpu, use_n_samples=parser.n_train_eval,
+                                    save=False,
+                                    returntype='dict', coco_header=coco_header,
+                                    **{kk:vv for kk,vv in parser.__dict__.items() if str(kk).startswith('w_')})
+            if coco_header is None:
+                coco_header = list(set((train_apar_summary.keys())) - set(train_loss_summary_dict.keys()))
+            train_apar_summary.update(train_loss_summary_dict)
+        else:
+            train_apar_summary = train_loss_summary_dict
+            print("\t".join(['{}:  {:.4f}'.format(kk,vv) for kk,vv in train_apar_summary.items()]))
+            
         epoch_logger_train(epoch_num, train_apar_summary)
         
-        if parser.dataset == 'coco':
-            print("EVAL ON VALIDATION SET")
+        print("EVAL ON VALIDATION SET")
+        if not retinanet.no_rpn:
             val_summary = coco_eval.evaluate_coco(dataset_val, retinanet,
                                     use_gpu=use_gpu, save=False, returntype='dict',
                                     **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
 #            print(val_summary)
-            epoch_logger_val(epoch_num, val_summary)
+        else:
+            with torch.no_grad():
+                mean_loss_sem   = 0.0
+                mean_ious       = [0.0]*dataset_train.num_classes()
+                retinanet.eval()
+                for iter_num, data in enumerate(dataloader_val):
+                    optimizer.zero_grad()
+                    #if iter_num>1: break
+                    img = data['img']
+                    msk = data['mask']
+                    if use_gpu:
+                        img = img.cuda()
+                        msk = msk.cuda()
+                    _,_,_, semantic =\
+                        retinanet(img)
+                    del _
+                    semantic_loss = loss_func_semantic_xe(semantic, msk)
+                    iou_ = losses.sparse_iou_pt(msk, semantic, reduce=False).cpu().detach().tolist()
+                    mean_loss_sem   = upd_mean(mean_loss_sem, semantic_loss, iter_num)
+                    mean_ious       = [upd_mean(mu, float(iou__), iter_num) for mu, iou__ in zip(mean_ious, iou_)]
+                val_summary = OrderedDict([
+                    ("loss_sem", float(mean_loss_sem)),
+                    ])
+                for ii,vv in enumerate(mean_ious):
+                    val_summary[("iou_%d"%(ii+1))]=vv
+                print("\t".join(['{}:  {:.4f}'.format(kk,vv) for kk,vv in val_summary.items()]))
+        epoch_logger_val(epoch_num, val_summary)
             
-        elif parser.dataset == 'csv' and parser.csv_val is not None:
-            print('Evaluating dataset')
-            eval_csv(dataloader_val, retinanet, total_loss,)
             
         scheduler.step(np.mean(epoch_loss))    
 
