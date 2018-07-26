@@ -538,7 +538,7 @@ class RetinaNet(nn.Module):
 
 #         self.decoder = UNetDecode(num_classes, hid_channels=fpn_sizes)
         self.decoder = nn.Sequential(
-                        UNetDecode(256, hid_channels=self.fpn_sizes[:-1]),
+                        UNetDecode(256, hid_channels=self.fpn_sizes),
                         UpsampleBlock(in_channels = 256, out_channels=1+num_classes, steps=3)
                         )
 
