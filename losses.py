@@ -164,7 +164,7 @@ def intersect_annot_anchors(anchors, bbox_annotation, num_classes=2,
 
     # REGRESSION TARGETS
     bbit = BBoxInvTransform()
-    regr_targets = bbit(anchor)
+    regr_targets = bbit(anchor[positive_indices], assigned_annotations)
     return targets, regr_targets, positive_indices
 
 
