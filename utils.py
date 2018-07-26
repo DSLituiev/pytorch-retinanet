@@ -130,7 +130,7 @@ class BBoxInvTransform(nn.Module):
         if self.std is None:
             self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
 
-    def forward(self, anchor):
+    def forward(self, anchor, assigned_annotations):
         if anchor.type().startswith('torch.cuda'):
             self.std = self.std.cuda()
             self.mean = self.mean.cuda()
