@@ -11,6 +11,9 @@ def sparse_to_onehot(msk, num_channels=3):
     else:
         res = torch.zeros((int(num_channels), 
                            int(msk.shape[-2]), int(msk.shape[-1])))
+
+    if msk.type().startswith('torch.cuda'):
+        res = res.cuda()
     for ii in range(num_channels):
         res[...,ii,:,:] = msk==ii
     return res
