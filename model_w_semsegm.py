@@ -704,12 +704,12 @@ class RetinaNet(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
-        
-#        self.classificationModel.output.weight.data.fill_(0)
-#        self.classificationModel.output.bias.data.fill_(-math.log((1.0-prior)/prior))
 
-#        self.regressionModel.output.weight.data.fill_(0)
-#        self.regressionModel.output.bias.data.fill_(0)
+        self.classificationModel.final.weight.data.fill_(0)
+        self.classificationModel.final.bias.data.fill_(-math.log((1.0-prior)/prior))
+
+        self.regressionModel.seq.convblock_final.conv.weight.data.fill_(0)
+        self.regressionModel.seq.convblock_final.conv.bias.data.fill_(0)
 
         self.freeze_bn()
         
@@ -839,9 +839,10 @@ class ApplyPredictions(nn.Module):
         assert (self.width is not None)
         assert (self.height is not None)
         anchors = self.anchors.anchors([self.height, self.width])
-        print("anchors", type(anchors))
+        if classification.type().startswith('torch.cuda'):
+            anchors = anchors.cuda()
+
         transformed_anchors = self.regressBoxes(anchors, regression)
-        print("transformed_anchors", transformed_anchors.shape)
         transformed_anchors = self.clipBoxes(transformed_anchors, height=height, width=width)
 
         scores = torch.max(classification, dim=2, keepdim=True)[0]
