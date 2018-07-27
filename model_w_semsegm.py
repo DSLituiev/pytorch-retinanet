@@ -126,7 +126,18 @@ class ReshapeAnchorsRegression(nn.Module):
         #return out2.contiguous()#.view(out.shape[0], -1, 4)
 
 
-class RegressionModel(nn.Module):
+class BaseRPN(nn.Module):
+    def conv_block(self, num_features_in, num_features_out, 
+                   kernel_size=3, padding=1,**kwargs):
+        seq = OrderedDict([("conv",nn.Conv2d(num_features_in, num_features_out, 
+                        kernel_size=kernel_size, padding=padding)),
+                            ("act", self.activation),])
+        if self.batch_norm:
+            seq["batch_norm"] = nn.BatchNorm2d(num_features_out)
+        return nn.Sequential(seq)
+    
+
+class RegressionModel(BaseRPN):
     def __init__(self, num_features_in, num_anchors=9, 
                  feature_sizes=[256]*3,
                  activation=nn.ReLU(),
@@ -158,20 +169,11 @@ class RegressionModel(nn.Module):
         self.seq["reshape"] = ( ReshapeAnchorsRegression(num_anchors=num_anchors) )
         self.seq = nn.Sequential(self.seq)
 
-    def conv_block(self, num_features_in, num_features_out, 
-                   kernel_size=3, padding=1,**kwargs):
-        seq = OrderedDict([("conv",nn.Conv2d(num_features_in, num_features_out, 
-                        kernel_size=kernel_size, padding=padding)),
-                            ("act", self.activation),])
-        if self.batch_norm:
-            seq["batch_norm"] = nn.BatchNorm2d(num_features_out)
-        return nn.Sequential(seq)
-
     def forward(self, x):
         return self.seq(x)
 
 
-class ClassificationModel(nn.Module):
+class ClassificationModel(BaseRPN):
     def __init__(self, num_features_in, num_anchors=9,
                  num_classes=80, 
                  prior=0.01,
@@ -205,15 +207,6 @@ class ClassificationModel(nn.Module):
                     ReshapeAnchorsClassScore(num_anchors=num_anchors, num_classes=num_classes),
                     ])
         self.seq = nn.Sequential(*self.seq)
-
-    def conv_block(self, num_features_in, num_features_out, 
-                   kernel_size=3, padding=1,**kwargs):
-        seq = OrderedDict([("conv",nn.Conv2d(num_features_in, num_features_out, 
-                        kernel_size=kernel_size, padding=padding)),
-                            ("act", self.activation),])
-        if self.batch_norm:
-            seq["batch_norm"] = nn.BatchNorm2d(num_features_out)
-        return nn.Sequential(seq)
 
     def forward(self, x):
         return self.seq(x)
