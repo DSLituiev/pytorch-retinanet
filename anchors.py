@@ -69,6 +69,8 @@ class Anchors(nn.Module):
             return all_anchors
 
     def anchors(self, image_shape=None):
+        if self.pyramid_shapes is None:
+            self.pyramid_shapes = self.compute_pyramid_shapes(image_shape, self.pyramid_levels)
         if not hasattr(self, '_anchors_'):
             self._anchors_ = self.compute_anchors()
         return self._anchors_
