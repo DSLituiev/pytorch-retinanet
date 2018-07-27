@@ -685,21 +685,19 @@ class RetinaNet(nn.Module):
         return out_ch
 
     def forward(self, img_batch):
-        [x2, x3, x4] = self.encoder(img_batch)
-#        import ipdb
-#        ipdb.set_trace()
-        if not self.no_semantic:
-            if not self.bypass_semantic:
-                sem_segm = self.decoder([x2, x3, x4])
-            else:
-                sem_segm = img_batch
+        if self.bypass_semantic:
+            sem_segm = img_batch
             features = subsample_features(sem_segm, self.pyramid_levels)
         else:
-            sem_segm = None
-            features = [ e2l(x) for e2l, x in zip(self.enc_to_logits, [x2, x3, x4]) ]
-            #features = self.fpn([x2, x3, x4])
-            # features.append(nn.MaxPool2d(2)(features[-1]))
-
+            [x2, x3, x4] = self.encoder(img_batch)
+            if not self.no_semantic:
+                sem_segm = self.decoder([x2, x3, x4])
+                features = subsample_features(sem_segm, self.pyramid_levels)
+            else:
+                sem_segm = None
+                features = [ e2l(x) for e2l, x in zip(self.enc_to_logits, [x2, x3, x4]) ]
+#        import ipdb
+#        ipdb.set_trace()
         if not self.no_rpn:
             if self.squeeze:
                 regression = self.collect_rpn_scores(self.regressionModel, features)
