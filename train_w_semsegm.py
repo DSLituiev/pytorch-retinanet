@@ -54,8 +54,10 @@ if __name__ == '__main__':
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
     parser.add_argument('--batch-size', help='batch size', type=int, default=2)
     parser.add_argument('--epochs', help='Number of epochs', type=int, default=100)
-    parser.add_argument('--n_train_eval', help='Number training samples to evaluate AP/AR metrics on', type=int,
-    default=20)
+    parser.add_argument('--n_train_eval', help='Number training samples to evaluate AP/AR metrics on',
+                        type=int, default=20)
+    parser.add_argument('--n_val_eval', help='Number training samples to evaluate AP/AR metrics on',
+                        type=int, default=None)
     
     parser.add_argument('--no-rpn', help='train only semantic segmentation, NOT RPN', action='store_true')
     parser.add_argument('--bypass-semantic', help='train RPN, by feeding semantic segmentation into it', action='store_true')
@@ -332,6 +334,7 @@ if __name__ == '__main__':
         print("EVAL ON VALIDATION SET")
         if not retinanet.no_rpn:
             val_summary = coco_eval.evaluate_coco(dataset_val, retinanet,
+                                                  use_n_samples=parser.n_val_eval,
                                     use_gpu=use_gpu, save=False, returntype='dict',
                                     **{kk:vv for kk,vv in parser.__dict__.items() if kk.startswith('w_')})
 #            print(val_summary)
