@@ -57,6 +57,10 @@ if __name__ == '__main__':
     parser.add_argument('--n_train_eval', help='Number training samples to evaluate AP/AR metrics on', type=int,
     default=20)
     parser.add_argument('--w-sem', help='weight for semantic segmentation branch', type=float, default=0.0)
+    parser.add_argument('--decoder-dropout', help='add droupout to the decoder', type=float, default=0.0)
+    parser.add_argument('--decoder-activation', help='add droupout to the decoder', default='relu')
+    parser.add_argument('--encoder-activation', help='add droupout to the encoder', default='relu')
+    parser.add_argument('--batch-norm', help='batch norm for decoder', action='store_true')
     parser.add_argument('--no-rpn', help='train only semantic segmentation, NOT RPN', action='store_true')
     parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
@@ -123,17 +127,36 @@ if __name__ == '__main__':
         sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=parser.batch_size, drop_last=False)
         dataloader_val = DataLoader(dataset_val, num_workers=4, collate_fn=collater, batch_sampler=sampler_val)
 
+    if parser.decoder_activation in (None, 'relu'):
+        decoder_activation = nn.ReLU() 
+    elif parser.decoder_activation.lower() == 'selu':
+        decoder_activation = nn.SELU()
+    else:
+        raise NotImplementedError()
+
+    if parser.encoder_activation in (None, 'relu'):
+        encoder_activation = nn.ReLU() 
+    elif parser.encoder_activation.lower() == 'selu':
+        encoder_activation = nn.SELU()
+    else:
+        raise NotImplementedError()
+
+    model_kws = dict(decoder_dropout = parser.decoder_dropout,
+                     decoder_activation = decoder_activation,
+                     encoder_activation = encoder_activation,
+                     batch_norm = parser.batch_norm,
+                     )
     # Create the model
     if parser.depth == 18:
-        retinanet = model.resnet18(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet18(num_classes=dataset_train.num_classes(), pretrained=True, **model_kws)
     elif parser.depth == 34:
-        retinanet = model.resnet34(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet34(num_classes=dataset_train.num_classes(), pretrained=True, **model_kws)
     elif parser.depth == 50:
-        retinanet = model.resnet50(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet50(num_classes=dataset_train.num_classes(), pretrained=True, **model_kws)
     elif parser.depth == 101:
-        retinanet = model.resnet101(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet101(num_classes=dataset_train.num_classes(), pretrained=True, **model_kws)
     elif parser.depth == 152:
-        retinanet = model.resnet152(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet152(num_classes=dataset_train.num_classes(), pretrained=True, **model_kws)
     else:
         raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')        
 
@@ -147,6 +170,7 @@ if __name__ == '__main__':
     if use_gpu:
         retinanet = retinanet.cuda()
 
+    ndigits = int(np.ceil(np.log10(len(dataloader_train))))
     if parser.no_rpn:
         retinanet.no_rpn = True
         logstr = '''Ep#{} | Iter#{:%d}/{:%d} || Losses | Sem: {:1.5f} | Running: {:1.4f} |'''  % ( ndigits, ndigits) 
@@ -176,7 +200,6 @@ if __name__ == '__main__':
     os.makedirs(logdir, exist_ok=True)
     parser.to_yaml(os.path.join(logdir, 'checkpoint.info'))
 
-    ndigits = int(np.ceil(np.log10(len(dataloader_train))))
     
     logfile_train = os.path.join(logdir, "progress-train.csv")
     logfile_val = os.path.join(logdir, "progress-val.csv")
@@ -260,7 +283,7 @@ if __name__ == '__main__':
                 raise e
                 print(e)
 #                break
-        del data, msk, semantic_logits, semantic_prob, img
+        del data, msk, img
         # print(epoch_num, float(mean_loss_total), float(mean_loss_class), float(mean_loss_regr), float(mean_loss_sem), *mean_ious, sep=',')
         train_loss_summary_dict = OrderedDict([("loss_total", float(mean_loss_total)),
          ("loss_class", float(mean_loss_class)),

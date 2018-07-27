@@ -191,7 +191,9 @@ class UpConv(nn.Module):
     A ReLU activation follows each convolution.
     """
     def __init__(self, in_channels, out_channels,
-                 merge_mode='concat', up_mode='transpose'):
+                 merge_mode='concat', up_mode='transpose',
+                 batch_norm = False,
+                 activation=nn.ReLU()):
         super(UpConv, self).__init__()
 
         self.in_channels = in_channels
@@ -209,7 +211,14 @@ class UpConv(nn.Module):
             # num of input channels to conv2 is same
             self.conv1 = conv3x3(self.out_channels, self.out_channels)
         self.conv2 = conv3x3(self.out_channels, self.out_channels)
-
+        seq = [ self.conv1,
+                activation,
+                self.conv2,
+                activation,
+               ]
+        if batch_norm:
+            seq.append(nn.BatchNorm2d(self.out_channels))
+        self.seq = nn.Sequential(*seq)
 
     def forward(self, input):
         """ Forward pass
@@ -231,11 +240,11 @@ class UpConv(nn.Module):
         else:
             warn("no from_down branch")
             x = from_up
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
+        x = self.seq(x)
         return x
 #############################################################
-def UpsampleBlock(in_channels = 256, out_channels=None, steps=3):
+def UpsampleBlock(in_channels = 256, out_channels=None, steps=3,
+				 activation=nn.ReLU(), batch_norm=False):
     in_channels_ = []
     out_channels_ = []
     for ii in range(steps):
@@ -249,7 +258,9 @@ def UpsampleBlock(in_channels = 256, out_channels=None, steps=3):
     uc = []
     for ii in range(steps):
 #         print(in_, out_)
-        uc.append(UpConv(in_channels_[ii], out_channels_[ii], merge_mode=''))  
+        uc.append(UpConv(in_channels_[ii], out_channels_[ii],
+						 merge_mode='', activation=activation,
+                         batch_norm=batch_norm))
     return torch.nn.Sequential(*uc)
 #############################################################
 class TemplateUnet(nn.Module):
@@ -339,6 +350,9 @@ class UNetEncode(TemplateUnet):
 class UNetDecode(TemplateUnet):
     def __init__(self, num_classes, in_channels=3, depth=5, 
                  start_filts=64, hid_channels = None,
+                 dropout=False,
+                 activation=nn.ReLU(),
+                 batch_norm=False,
                  up_mode='transpose', 
                  merge_mode='concat'):
         """
@@ -353,6 +367,7 @@ class UNetDecode(TemplateUnet):
                 upsampling.
         """
         super(UNetDecode, self).__init__()
+        self.dropout = dropout
         if hid_channels is not None:
             depth = len(hid_channels)
 
@@ -403,8 +418,16 @@ class UNetDecode(TemplateUnet):
         for i in range(depth-1):
 #             ins = outs
 #             outs = ins // 2
-            up_conv = UpConv(self.ins[i], self.outs[i], up_mode=up_mode,
-                merge_mode=merge_mode)
+            up_conv = nn.ModuleList(
+                [UpConv(self.ins[i], self.outs[i], up_mode=up_mode,
+                       merge_mode=merge_mode,
+                       activation=activation,
+                       batch_norm=batch_norm,
+                       ),
+                ])
+            if self.dropout is not None and self.dropout>0.0:
+                up_conv.append( nn.AlphaDropout(p=0.5) )
+            up_conv = nn.Sequential(*up_conv)
             self.up_convs.append(up_conv)
 
         self.conv_final = conv1x1(self.outs[-1], self.num_classes)
@@ -434,13 +457,16 @@ class UNetDecode(TemplateUnet):
 
 
 class ResNet(nn.Module):
-    def __init__(self, block = Bottleneck, num_classes=None, layers=[3, 4, 6, 3]):
-        self.inplanes = 64
+    def __init__(self, block = Bottleneck, num_classes=None, layers=[3, 4, 6, 3],
+                activation=nn.ReLU(inplace=True),
+                ):
         super(ResNet, self).__init__()
+        self.inplanes = 64
+        self.activation = activation
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
+        self.activation = activation
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
@@ -467,10 +493,11 @@ class ResNet(nn.Module):
             )
 
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
+        layers.append(block(self.inplanes, planes, stride, downsample,
+                            activation=self.activation))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
+            layers.append(block(self.inplanes, planes, activation=self.activation))
 
         return nn.Sequential(*layers)
 
@@ -484,7 +511,7 @@ class ResNet(nn.Module):
 
         x = self.conv1(img_batch)
         x = self.bn1(x)
-        x = self.relu(x)
+        x = self.activation(x)
         x = self.maxpool(x)
 
         x1 = self.layer1(x)
@@ -515,13 +542,18 @@ class RetinaNet(nn.Module):
                  no_rpn = False,
                  no_semantic=False,
                  squeeze=True,
+                 decoder_dropout=None,
+                 decoder_activation=nn.ReLU(),
+                 encoder_activation=nn.ReLU(inplace=True),
+                 batch_norm=False,
                  ):
         super(RetinaNet, self).__init__()
         self.squeeze = squeeze
         self.pyramid_levels = [3,4,5]
         self.no_rpn = no_rpn
         self.no_semantic = no_semantic
-        self.encoder = ResNet(block=block, layers=layers)
+        self.encoder = ResNet(block=block, layers=layers, 
+                              activation=encoder_activation)
         self.fpn_sizes = [self.get_out_channels(getattr(self.encoder,"layer%d"%nn)) for nn in [2,3,4]]
         #self.fpn_sizes.append([sz[-1]//2 for sz in self.fpn_sizes[-1]])
         print("fpn_sizes")
@@ -538,8 +570,14 @@ class RetinaNet(nn.Module):
 
 #         self.decoder = UNetDecode(num_classes, hid_channels=fpn_sizes)
         self.decoder = nn.Sequential(
-                        UNetDecode(256, hid_channels=self.fpn_sizes),
-                        UpsampleBlock(in_channels = 256, out_channels=1+num_classes, steps=3)
+                        UNetDecode(256, hid_channels=self.fpn_sizes, 
+                                   dropout=decoder_dropout,
+                                   batch_norm=batch_norm,
+                                   activation=decoder_activation),
+                        UpsampleBlock(in_channels = 256,
+                                      out_channels=1+num_classes, steps=3,
+                                      activation=decoder_activation,
+                                      batch_norm=batch_norm)
                         )
 
         self.enc_to_logits  = nn.ModuleList([EncToLogits(n, num_classes+1) for n in self.fpn_sizes])
