@@ -72,8 +72,8 @@ if __name__ == '__main__':
     parser.add_argument('--lr', help='initial learning rate', type=float, default=1e-5)
     parser.add_argument('--overwrite', help='overwrite existing folder',
                         dest='overwrite', action='store_true')
-    parser.add_argument('--class-feature-sizes', nargs='+', type=int, default=[256]*3)
-    parser.add_argument('--regr-feature-sizes', nargs='+', type=int, default=[256]*3)
+    parser.add_argument('--class-feature-sizes', nargs='+', type=int, default=[64, 32])
+    parser.add_argument('--regr-feature-sizes', nargs='+', type=int, default=[64, 64])
    
     parser = parser.parse_args()
 #    parser = parser.parse_args(args)
@@ -263,6 +263,9 @@ if __name__ == '__main__':
                     classification_loss, regression_loss =\
                         loss_func_bbox(classifications, regressions, 
                                    anchors, annot)
+                    tmp = classifications.detach().cpu().numpy().ravel()
+                    print("score min: {:.4f}\tmedian: {:.4f}\tmax: {:.4f}".format(
+                            np.min(tmp), np.median(tmp), np.max(tmp)))
                 else:
                     if use_gpu:
                         classification_loss = regression_loss = torch.tensor(0.0).cuda()

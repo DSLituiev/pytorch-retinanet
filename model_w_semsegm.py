@@ -136,7 +136,56 @@ class BaseRPN(nn.Module):
             seq["batch_norm"] = nn.BatchNorm2d(num_features_out)
         return nn.Sequential(seq)
     
-
+class SharedRPN(BaseRPN):
+    def __init__(self, num_features_in, num_anchors=9,
+                 num_classes=80, 
+                 feature_sizes_shared=[256, 256, 128],
+                 feature_sizes_regr=[64, 64, 64],
+                 feature_sizes_class=[64, 64, 32],
+                 activation=nn.ReLU(),
+                 batch_norm = True,
+                 b_init = 0.0,
+                 w_init = 1e-6,
+                 prior=0.01,
+                 ):
+        assert len(feature_sizes_shared)>=2, "feature_sizes must be a list of at least 2 entries"
+        super(SharedRPN, self).__init__()
+        self.activation = activation
+        self.batch_norm=batch_norm
+        self.shared = OrderedDict([("shared_convblock_1", 
+                                 self.conv_block(num_features_in, feature_sizes_shared[0], 
+                                                 kernel_size=3, padding=1),)])
+        
+        for ii, fs in enumerate(feature_sizes_shared[1:]):
+            self.shared["shared_convblock_1%d" %(ii+2)] = \
+                    self.conv_block(fs, fs, kernel_size=3, padding=1)
+        self.shared = nn.Sequential(self.shared)
+        num_features_shared_out = fs
+        
+        self.regrn = RegressionModel(num_features_shared_out,
+                                    num_anchors=num_anchors, 
+                                     feature_sizes=[128]*2,
+                                     activation=activation,
+                                     batch_norm = batch_norm,
+                                     b_init=b_init,
+                                     w_init=w_init,
+                                     )
+        self.classn = ClassificationModel(num_features_shared_out,
+                                          num_anchors=num_anchors,
+                                         num_classes=num_classes, 
+                                         prior=prior,
+                                         w_init = w_init,
+                                         feature_sizes=feature_sizes_class,
+                                         activation=activation,
+                                         batch_norm=batch_norm,
+                                         )
+    def forward(self, x):
+        x_sh = self.shared(x)
+        x_sh = torch.cat((x_sh, x), 1)
+        cn = self.classn(x_sh)
+        rn = self.regrn(x_sh)
+        return cn, rn
+        
 class RegressionModel(BaseRPN):
     def __init__(self, num_features_in, num_anchors=9, 
                  feature_sizes=[256]*3,
@@ -157,10 +206,10 @@ class RegressionModel(BaseRPN):
                                  self.conv_block(num_features_in, feature_sizes[0], 
                                                  kernel_size=3, padding=1),)])
         
-        for ii, fs in enumerate(feature_sizes[1:-1]):
+        for ii, fs in enumerate(feature_sizes[:-1]):
             self.seq["convblock_%d" %(ii+2)] = \
-                    self.conv_block(fs, fs, kernel_size=3, padding=1)
-        self.seq["convblock_final"] = self.conv_block(fs, num_anchors*4, kernel_size=3, padding=1)
+                    self.conv_block(fs, feature_sizes[ii+1], kernel_size=3, padding=1)
+        self.seq["convblock_final"] = self.conv_block(feature_sizes[-1], num_anchors*4, kernel_size=3, padding=1)
         if w_init is not None:
             self.seq["convblock_final"][0].weight.data.fill_(w_init)
         if b_init is not None:
@@ -189,12 +238,13 @@ class ClassificationModel(BaseRPN):
         self.num_classes = num_classes
         self.num_anchors = num_anchors
         
-        self.seq = [ self.conv_block(num_features_in, feature_sizes[0], kernel_size=3, padding=1),]
-        for fs in feature_sizes[1:-1]:
+        self.seq = [self.conv_block(num_features_in, feature_sizes[0],
+                                    kernel_size=3, padding=1),]
+        for ii, fs in enumerate(feature_sizes[:-1]):
             self.seq.append(
-                    self.conv_block(fs, fs, kernel_size=3, padding=1),
+                    self.conv_block(fs, feature_sizes[ii+1], 
+                                    kernel_size=3, padding=1),
                     )
-
         self.final = nn.Conv2d(feature_sizes[-1], num_anchors*num_classes,
                                kernel_size=1, padding=0)
         if w_init is not None:
@@ -204,7 +254,8 @@ class ClassificationModel(BaseRPN):
 
         self.seq.extend([ self.final,
                     nn.Sigmoid(),
-                    ReshapeAnchorsClassScore(num_anchors=num_anchors, num_classes=num_classes),
+                    ReshapeAnchorsClassScore(num_anchors=num_anchors,
+                                             num_classes=num_classes),
                     ])
         self.seq = nn.Sequential(*self.seq)
 
@@ -577,6 +628,7 @@ class RetinaNet(nn.Module):
                  batch_norm=False,
                  regr_feature_sizes=[256]*3,
                  class_feature_sizes=[256]*3,
+                 shared_feature_sizes = [256]*3,
                  ):
         super(RetinaNet, self).__init__()
         self.bypass_semantic = bypass_semantic
@@ -612,7 +664,8 @@ class RetinaNet(nn.Module):
                                       batch_norm=batch_norm)
                         )
 
-        self.enc_to_logits  = nn.ModuleList([EncToLogits(n, num_classes+1) for n in self.fpn_sizes])
+        self.enc_to_logits  = nn.ModuleList([EncToLogits(n, num_classes+1) \
+                                             for n in self.fpn_sizes])
         #self.fpn = PyramidFeatures(self.fpn_sizes[0], self.fpn_sizes[1], self.fpn_sizes[2])
         #self.regressionModel = RegressionModel(256)
         #self.classificationModel = ClassificationModel(256, num_classes=num_classes)
@@ -628,11 +681,21 @@ class RetinaNet(nn.Module):
                                     activation=decoder_activation,
                                     feature_sizes=class_feature_sizes)
 
-        self.anchors = Anchors(pyramid_levels=self.pyramid_levels, squeeze=squeeze)
+        self.sharedRPN  = SharedRPN(num_classes+1,
+                                    num_classes=num_classes,
+                                    batch_norm=batch_norm,
+                                    activation=decoder_activation,
+                                    feature_sizes_shared=shared_feature_sizes,
+                                    feature_sizes_class=class_feature_sizes,
+                                    feature_sizes_regr=regr_feature_sizes)
+        
+        self.anchors = Anchors(pyramid_levels=self.pyramid_levels,
+                               squeeze=squeeze)
 
-        self.regressBoxes = BBoxTransform()
+#        self.regressBoxes = BBoxTransform()
 
         self.clipBoxes = ClipBoxes()
+        self.applyPredictions = ApplyPredictions(self.anchors)
                 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -696,8 +759,14 @@ class RetinaNet(nn.Module):
                 regression = self.collect_rpn_scores(self.regressionModel, features)
                 classification = self.collect_rpn_scores(self.classificationModel, features)
             else:
-                regression = [self.regressionModel(f) for f in features]
-                classification = [self.classificationModel(f) for f in features]
+                regression = []
+                classification = []
+                for f in features:
+                    cn, rn = sharedRPN(f)
+                    regression.append(rn)
+                    classification.append(cn)
+#                regression = [self.regressionModel(f) for f in features]
+#                classification = [self.classificationModel(f) for f in features]
             #regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
             #classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
         else:
@@ -712,38 +781,93 @@ class RetinaNet(nn.Module):
             return [classification, regression, anchors, sem_segm,]
         else:
             if not self.no_rpn:
-                transformed_anchors = self.regressBoxes(anchors, regression)
-                transformed_anchors = self.clipBoxes(transformed_anchors, img_batch)
-
-                scores = torch.max(classification, dim=2, keepdim=True)[0]
-
-                scores_over_thresh = (scores>0.05)[0, :, 0]
-
-                if scores_over_thresh.sum() == 0:
-                    # no boxes to NMS, just return
-                    return [classification, regression, anchors, sem_segm ] +\
-                        [torch.zeros(0), torch.zeros(0), torch.zeros(0, 4),]
-
-                classification_selected = classification[:, scores_over_thresh, :]
-                transformed_anchors = transformed_anchors[:, scores_over_thresh, :]
-                scores = scores[:, scores_over_thresh, :]
-
-                # the code here uses [x0, y0, h, w] format
-                # the NMS module accepts [x0, y0, x1, y1] format
-                transformed_anchors_coord = transformed_anchors.clone()
-                transformed_anchors_coord[...,2:] = transformed_anchors_coord[...,2:] + transformed_anchors[...,:2]
-
-                anchors_nms_idx = nms(torch.cat([transformed_anchors_coord, scores], dim=2)[0, :, :], 0.5)
-
-                nms_scores, nms_class = classification_selected[0, anchors_nms_idx, :].max(dim=1)
+                _, _, height, width = img_batch.shape
+                nms_scores, nms_class, transformed_anchors = \
+                    self.applyPredictions(classification, regression,
+                                          height=height, width=width)
+#                transformed_anchors = self.regressBoxes(anchors, regression)
+#                transformed_anchors = self.clipBoxes(transformed_anchors, img_batch)
+#
+#                scores = torch.max(classification, dim=2, keepdim=True)[0]
+#
+#                scores_over_thresh = (scores>0.05)[0, :, 0]
+#
+#                if scores_over_thresh.sum() == 0:
+#                    # no boxes to NMS, just return
+#                    return [classification, regression, anchors, sem_segm ] +\
+#                        [torch.zeros(0), torch.zeros(0), torch.zeros(0, 4),]
+#
+#                classification_selected = classification[:, scores_over_thresh, :]
+#                transformed_anchors = transformed_anchors[:, scores_over_thresh, :]
+#                scores = scores[:, scores_over_thresh, :]
+#
+#                # the code here uses [x0, y0, h, w] format
+#                # the NMS module accepts [x0, y0, x1, y1] format
+#                transformed_anchors_coord = transformed_anchors.clone()
+#                transformed_anchors_coord[...,2:] = transformed_anchors_coord[...,2:] + transformed_anchors[...,:2]
+#
+#                anchors_nms_idx = nms(torch.cat([transformed_anchors_coord, scores], dim=2)[0, :, :], 0.5)
+#
+#                nms_scores, nms_class = classification_selected[0, anchors_nms_idx, :].max(dim=1)
 
                 return [classification, regression, anchors, sem_segm] + \
                        [nms_scores,
                         nms_class,
-                        transformed_anchors[0, anchors_nms_idx, :], 
+                        transformed_anchors, 
                         ]
             else:
                 return [classification, regression, anchors, sem_segm]
+
+
+class ApplyPredictions(nn.Module):
+    def __init__(self, anchors, thr=0.05, nms_thr=0.5, height=None, width=None):
+        super(ApplyPredictions, self).__init__()
+        self.height = height
+        self.width = width
+        self.anchors = anchors
+        self.thr = thr
+        self.nms_thr = nms_thr
+        self.regressBoxes = BBoxTransform()
+        self.clipBoxes = ClipBoxes(height=height, width=width)
+
+    def forward(self, classification, regression, height=None, width=None):
+#        [classification, regression] = input
+        if self.height is None:
+            self.height = height
+        if self.width is None:
+            self.width = width
+        assert (self.width is not None)
+        assert (self.height is not None)
+        anchors = self.anchors.anchors([self.height, self.width])
+        print("anchors", type(anchors))
+        transformed_anchors = self.regressBoxes(anchors, regression)
+        print("transformed_anchors", transformed_anchors.shape)
+        transformed_anchors = self.clipBoxes(transformed_anchors, height=height, width=width)
+
+        scores = torch.max(classification, dim=2, keepdim=True)[0]
+        scores_over_thresh = (scores > self.thr)[0, :, 0]
+
+        if scores_over_thresh.sum() == 0:
+            # no boxes to NMS, just return
+            return [ torch.zeros(0), torch.zeros(0, 4), ]
+
+        classification_selected = classification[:, scores_over_thresh, :]
+        transformed_anchors = transformed_anchors[:, scores_over_thresh, :]
+        scores = scores[:, scores_over_thresh, :]
+
+        # the code here uses [x0, y0, h, w] format
+        # the NMS module accepts [x0, y0, x1, y1] format
+        transformed_anchors_coord = transformed_anchors.clone()
+        transformed_anchors_coord[..., 2:] = transformed_anchors_coord[..., 2:] + transformed_anchors[..., :2]
+
+        combo = torch.cat([transformed_anchors_coord, scores], dim=2)[0,:,:]
+        anchors_nms_idx = nms(combo, self.nms_thr)
+
+        nms_scores, nms_class = classification_selected[0, anchors_nms_idx, :].max(dim=1)
+        return [nms_scores,
+                nms_class,
+                transformed_anchors[0, anchors_nms_idx, :],
+               ]
 
 
 #############################################################
