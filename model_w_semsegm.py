@@ -10,7 +10,7 @@ from anchors import Anchors
 
 from unet import DownConv, conv1x1, conv3x3, upconv2x2
 from coordconv import CoordConv
-
+from collections import OrderedDict
 from lib.nms.pth_nms import pth_nms
 
 def nms(dets, thresh):
@@ -142,29 +142,30 @@ class RegressionModel(nn.Module):
         self.batch_norm = batch_norm
         
         
-        self.seq = [ self.conv_block(num_features_in, feature_sizes[0], kernel_size=3, padding=1),]
-        for fs in feature_sizes[1:-1]:
-            self.seq.append(
+        self.seq = OrderedDict([("convblock_1", 
+                                 self.conv_block(num_features_in, feature_sizes[0], 
+                                                 kernel_size=3, padding=1),)])
+        
+        for ii, fs in enumerate(feature_sizes[1:-1]):
+            self.seq["convblock_%d" %(ii+2)] = \
                     self.conv_block(fs, fs, kernel_size=3, padding=1)
-                    )
-        self.final = self.conv_block(fs, num_anchors*4, kernel_size=3, padding=1)
+        self.seq["convblock_final"] = self.conv_block(fs, num_anchors*4, kernel_size=3, padding=1)
         if w_init is not None:
-            self.final.weight.data.fill_(w_init)
+            self.seq["convblock_final"][0].weight.data.fill_(w_init)
         if b_init is not None:
-            self.final.bias.data.fill_(b_init)
-        self.seq.append(self.final)
-        self.seq.append( ReshapeAnchorsRegression(num_anchors=num_anchors) )
-        self.seq = nn.Sequential(*self.seq)
+            self.seq["convblock_final"][0].bias.data.fill_(b_init)
+#        self.seq.append(self.final)
+        self.seq["reshape"] = ( ReshapeAnchorsRegression(num_anchors=num_anchors) )
+        self.seq = nn.Sequential(self.seq)
 
     def conv_block(self, num_features_in, num_features_out, 
                    kernel_size=3, padding=1,**kwargs):
-        seq = [nn.Conv2d(num_features_in, num_features_out, 
-                        kernel_size=kernel_size, padding=padding),
-               self.activation,
-               ]
+        seq = OrderedDict([("conv",nn.Conv2d(num_features_in, num_features_out, 
+                        kernel_size=kernel_size, padding=padding)),
+                            ("act", self.activation),])
         if self.batch_norm:
-            seq.append( BatchNorm2d(num_features_out) )
-        return nn.Sequential(*seq)
+            seq["batch_norm"] = nn.BatchNorm2d(num_features_out)
+        return nn.Sequential(seq)
 
     def forward(self, x):
         return self.seq(x)
@@ -207,13 +208,12 @@ class ClassificationModel(nn.Module):
 
     def conv_block(self, num_features_in, num_features_out, 
                    kernel_size=3, padding=1,**kwargs):
-        seq = [nn.Conv2d(num_features_in, num_features_out, 
-                        kernel_size=kernel_size, padding=padding),
-               self.activation,
-               ]
+        seq = OrderedDict([("conv",nn.Conv2d(num_features_in, num_features_out, 
+                        kernel_size=kernel_size, padding=padding)),
+                            ("act", self.activation),])
         if self.batch_norm:
-            seq.append( BatchNorm2d(num_features_out) )
-        return nn.Sequential(*seq)
+            seq["batch_norm"] = nn.BatchNorm2d(num_features_out)
+        return nn.Sequential(seq)
 
     def forward(self, x):
         return self.seq(x)
