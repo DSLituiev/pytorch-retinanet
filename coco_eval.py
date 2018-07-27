@@ -163,7 +163,7 @@ def evaluate_coco(dataset, model, threshold=0.05, use_gpu=True,
             print('{}/{}'.format(index, len(dataset)), end='\r')
 
         if not len(results):
-            return
+            return {}
 
         loss_summary_dict = OrderedDict([("loss_total", float(mean_loss_total)),
                                  ("loss_class", float(mean_loss_class)),

@@ -23,6 +23,7 @@ import losses
 from dataloader import CocoDataset, CSVDataset, collater, Resizer, AspectRatioBasedSampler, Augmenter, UnNormalizer, Normalizer
 from torch.utils.data import Dataset, DataLoader
 
+import utils
 import coco_eval
 from coco_eval import upd_mean
 from collections import OrderedDict
@@ -50,23 +51,27 @@ if __name__ == '__main__':
     parser.add_argument('--csv_train', help='Path to file containing training annotations (see readme)')
     parser.add_argument('--csv_classes', help='Path to file containing class list (see readme)')
     parser.add_argument('--csv_val', help='Path to file containing validation annotations (optional, see readme)')
-
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
     parser.add_argument('--batch-size', help='batch size', type=int, default=2)
     parser.add_argument('--epochs', help='Number of epochs', type=int, default=100)
     parser.add_argument('--n_train_eval', help='Number training samples to evaluate AP/AR metrics on', type=int,
     default=20)
+    
+    parser.add_argument('--no-rpn', help='train only semantic segmentation, NOT RPN', action='store_true')
+    parser.add_argument('--bypass-semantic', help='train RPN, by feeding semantic segmentation into it', action='store_true')
     parser.add_argument('--w-sem', help='weight for semantic segmentation branch', type=float, default=0.0)
+    parser.add_argument('--weight-decay', help='weight decay', type=float, default=0.0)
     parser.add_argument('--decoder-dropout', help='add droupout to the decoder', type=float, default=0.0)
     parser.add_argument('--decoder-activation', help='add droupout to the decoder', default='relu')
     parser.add_argument('--encoder-activation', help='add droupout to the encoder', default='relu')
     parser.add_argument('--batch-norm', help='batch norm for decoder', action='store_true')
-    parser.add_argument('--no-rpn', help='train only semantic segmentation, NOT RPN', action='store_true')
     parser.add_argument('--w-class', help='weight for classification segmentation branch', type=float, default=1.0)
     parser.add_argument('--w-regr', help='weight for regression segmentation branch', type=float, default=1.0)
     parser.add_argument('--lr', help='initial learning rate', type=float, default=1e-5)
     parser.add_argument('--overwrite', help='overwrite existing folder',
                         dest='overwrite', action='store_true')
+    parser.add_argument('--class-feature-sizes', nargs='+', type=int, default=[256]*3)
+    parser.add_argument('--regr-feature-sizes', nargs='+', type=int, default=[256]*3)
    
     parser = parser.parse_args()
 #    parser = parser.parse_args(args)
@@ -145,6 +150,9 @@ if __name__ == '__main__':
                      decoder_activation = decoder_activation,
                      encoder_activation = encoder_activation,
                      batch_norm = parser.batch_norm,
+                     bypass_semantic = parser.bypass_semantic,
+                     regr_feature_sizes=[256]*3,
+                     class_feature_sizes=[256]*3,
                      )
     # Create the model
     if parser.depth == 18:
@@ -180,7 +188,9 @@ if __name__ == '__main__':
 
     retinanet.training = True
 
-    optimizer = optim.Adam(retinanet.parameters(), lr=parser.lr)
+    optimizer = optim.Adam(retinanet.parameters(),
+                           lr=parser.lr,
+                           weight_decay = parser.weight_decay)
 
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True)
 
@@ -206,6 +216,7 @@ if __name__ == '__main__':
     epoch_logger_train = coco_eval.CSVLogger(logfile_train)
     epoch_logger_val = coco_eval.CSVLogger(logfile_val)
     
+    num_channels = len(dataset_train.coco_labels)
     coco_header = None
     for epoch_num in range(parser.epochs):
         retinanet.train()
@@ -232,11 +243,19 @@ if __name__ == '__main__':
                     img = img.cuda()
                     msk = msk.cuda()
                     annot = annot.cuda()
+
+                if parser.bypass_semantic:
+                    img = utils.sparse_to_onehot(msk, num_channels=1+num_channels)
+
                 classifications, regressions, anchors, semantic_logits =\
                     retinanet(img)
-                
-                semantic_loss, iou_ = losses.get_semantic_metrics(semantic_logits, msk,
-                                                                  loss_func_semantic_xe=loss_func_semantic_xe)
+             
+                if not parser.bypass_semantic:
+                    semantic_loss, iou_ = losses.get_semantic_metrics(
+                                                semantic_logits, msk,
+                                                loss_func_semantic_xe=loss_func_semantic_xe)
+                else:
+                    semantic_loss, iou_ = 0.0, [0.0] * num_channels
 
                 if not retinanet.no_rpn:
                     classification_loss, regression_loss =\
@@ -255,8 +274,9 @@ if __name__ == '__main__':
                 mean_loss_total = upd_mean(mean_loss_total, loss, iter_num)
                 mean_loss_class = upd_mean(mean_loss_class, classification_loss, iter_num)
                 mean_loss_regr  = upd_mean(mean_loss_regr, regression_loss, iter_num)
-                mean_loss_sem   = upd_mean(mean_loss_sem, semantic_loss, iter_num)
-                mean_ious       = [upd_mean(mu, float(iou__), iter_num) for mu, iou__ in zip(mean_ious, iou_)]
+                if not parser.bypass_semantic:
+                    mean_loss_sem   = upd_mean(mean_loss_sem, semantic_loss, iter_num)
+                    mean_ious       = [upd_mean(mu, float(iou__), iter_num) for mu, iou__ in zip(mean_ious, iou_)]
                 
                 if bool(loss == 0):
                     continue

@@ -90,98 +90,133 @@ class PyramidFeatures(nn.Module):
         return [P3_x, P4_x, P5_x, P6_x, P7_x]
 
 
-class RegressionModel(nn.Module):
-    def __init__(self, num_features_in, num_anchors=9, feature_size=256):
-        super(RegressionModel, self).__init__()
+class ReshapeAnchorsClassScore(nn.Module):
+    """returns array of dimensions
+        (batch_size, self.num_classes, self.num_anchors, width, height,)
+    """
+    def __init__(self, num_anchors=9, num_classes=80,):
+        super(ReshapeAnchorsClassScore, self).__init__()
         self.num_anchors = num_anchors
-        
-        self.conv1 = nn.Conv2d(num_features_in, feature_size, kernel_size=3, padding=1)
-        self.act1 = nn.ReLU()
-
-        self.conv2 = nn.Conv2d(feature_size, feature_size, kernel_size=3, padding=1)
-        self.act2 = nn.ReLU()
-
-        self.conv3 = nn.Conv2d(feature_size, feature_size, kernel_size=3, padding=1)
-        self.act3 = nn.ReLU()
-
-        self.conv4 = nn.Conv2d(feature_size, feature_size, kernel_size=3, padding=1)
-        self.act4 = nn.ReLU()
-
-        self.output = nn.Conv2d(feature_size, num_anchors*4, kernel_size=3, padding=1)
-
-    def forward(self, x):
-
-        out = self.conv1(x)
-        out = self.act1(out)
-
-        out = self.conv2(out)
-        out = self.act2(out)
-
-        out = self.conv3(out)
-        out = self.act3(out)
-
-        out = self.conv4(out)
-        out = self.act4(out)
-
-        out = self.output(out)
-
-        #print("shape", out.shape)
-        # out is B x C x W x H, with C = 4*num_anchors
-        batch_size, channels, width, height = out.shape
-        #out = out.permute(0, 2, 3, 1)
-        #batch_size, width, height, channels = out.shape
-        #out2 = out.contiguous().view(batch_size, self.num_anchors, 4, width, height,)
-        out2 = out.contiguous().view(batch_size, 4, self.num_anchors, width, height,)
-
-        return out2.contiguous()#.view(out.shape[0], -1, 4)
-
-class ClassificationModel(nn.Module):
-    def __init__(self, num_features_in, num_anchors=9, num_classes=80, prior=0.01, feature_size=256):
-        super(ClassificationModel, self).__init__()
-
         self.num_classes = num_classes
-        self.num_anchors = num_anchors
-        
-        self.conv1 = nn.Conv2d(num_features_in, feature_size, kernel_size=3, padding=1)
-        self.act1 = nn.ReLU()
-
-        self.conv2 = nn.Conv2d(feature_size, feature_size, kernel_size=3, padding=1)
-        self.act2 = nn.ReLU()
-
-        self.conv3 = nn.Conv2d(feature_size, feature_size, kernel_size=3, padding=1)
-        self.act3 = nn.ReLU()
-
-        self.conv4 = nn.Conv2d(feature_size, feature_size, kernel_size=3, padding=1)
-        self.act4 = nn.ReLU()
-
-        self.output = nn.Conv2d(feature_size, num_anchors*num_classes, kernel_size=3, padding=1)
-        self.output_act = nn.Sigmoid()
+        return
 
     def forward(self, x):
-
-        out = self.conv1(x)
-        out = self.act1(out)
-
-        out = self.conv2(out)
-        out = self.act2(out)
-
-        out = self.conv3(out)
-        out = self.act3(out)
-
-        out = self.conv4(out)
-        out = self.act4(out)
-
-        out = self.output(out)
-        out = self.output_act(out)
-        batch_size, channels, width, height = out.shape
-
+        batch_size, channels, width, height = x.shape
+        return x.contiguous().view(batch_size, self.num_classes, self.num_anchors, width, height,)
         # out is B x C x W x H, with C = n_classes + n_anchors
         #out1 = out.permute(0, 2, 3, 1)
         #batch_size, width, height, channels = out1.shape
+        # todo: write a reshape layer
+        # return out2.contiguous()#.view(x.shape[0], -1, self.num_classes)
 
-        out2 = out.contiguous().view(batch_size, self.num_classes, self.num_anchors, width, height,)
 
-        return out2.contiguous()#.view(x.shape[0], -1, self.num_classes)
+class ReshapeAnchorsRegression(nn.Module):
+    """returns array of dimensions
+        (batch_size, 4, self.num_anchors, width, height,)
+    """
+    def __init__(self, num_anchors=9,):
+        super(ReshapeAnchorsRegression, self).__init__()
+        self.num_anchors = num_anchors
+        return
+
+    def forward(self, x):
+        batch_size, channels, width, height = x.shape
+        out = x.contiguous().view(batch_size, 4, self.num_anchors, width, height,)
+        return out
+        #return out2.contiguous()#.view(out.shape[0], -1, 4)
+
+
+class RegressionModel(nn.Module):
+    def __init__(self, num_features_in, num_anchors=9, 
+                 feature_sizes=[256]*3,
+                 activation=nn.ReLU(),
+                 batch_norm = True,
+                 b_init = 0.0,
+                 w_init = 0.0,
+                 ):
+        assert len(feature_sizes)>=2, "feature_sizes must be a list of at least 2 entries"
+        super(RegressionModel, self).__init__()
+
+        self.num_anchors = num_anchors
+        self.activation = activation
+        self.batch_norm = batch_norm
+        
+        
+        self.seq = [ self.conv_block(num_features_in, feature_sizes[0], kernel_size=3, padding=1),]
+        for fs in feature_sizes[1:-1]:
+            self.seq.append(
+                    self.conv_block(fs, fs, kernel_size=3, padding=1)
+                    )
+        self.final = self.conv_block(fs, num_anchors*4, kernel_size=3, padding=1)
+        if w_init is not None:
+            self.final.weight.data.fill_(w_init)
+        if b_init is not None:
+            self.final.bias.data.fill_(b_init)
+        self.seq.append(self.final)
+        self.seq.append( ReshapeAnchorsRegression(num_anchors=num_anchors) )
+        self.seq = nn.Sequential(*self.seq)
+
+    def conv_block(self, num_features_in, num_features_out, 
+                   kernel_size=3, padding=1,**kwargs):
+        seq = [nn.Conv2d(num_features_in, num_features_out, 
+                        kernel_size=kernel_size, padding=padding),
+               self.activation,
+               ]
+        if self.batch_norm:
+            seq.append( BatchNorm2d(num_features_out) )
+        return nn.Sequential(*seq)
+
+    def forward(self, x):
+        return self.seq(x)
+
+
+class ClassificationModel(nn.Module):
+    def __init__(self, num_features_in, num_anchors=9,
+                 num_classes=80, 
+                 prior=0.01,
+                 w_init = 0.0,
+                 feature_sizes=[256]*3,
+                 activation=nn.ReLU(),
+                 batch_norm=True,
+                 ):
+        super(ClassificationModel, self).__init__()
+
+        self.activation = activation
+        self.batch_norm = batch_norm
+        self.num_classes = num_classes
+        self.num_anchors = num_anchors
+        
+        self.seq = [ self.conv_block(num_features_in, feature_sizes[0], kernel_size=3, padding=1),]
+        for fs in feature_sizes[1:-1]:
+            self.seq.append(
+                    self.conv_block(fs, fs, kernel_size=3, padding=1),
+                    )
+
+        self.final = nn.Conv2d(feature_sizes[-1], num_anchors*num_classes,
+                               kernel_size=1, padding=0)
+        if w_init is not None:
+            self.final.weight.data.fill_(w_init)
+        if prior is not None:
+            self.final.bias.data.fill_(-math.log((1.0-prior)/prior))
+
+        self.seq.extend([ self.final,
+                    nn.Sigmoid(),
+                    ReshapeAnchorsClassScore(num_anchors=num_anchors, num_classes=num_classes),
+                    ])
+        self.seq = nn.Sequential(*self.seq)
+
+    def conv_block(self, num_features_in, num_features_out, 
+                   kernel_size=3, padding=1,**kwargs):
+        seq = [nn.Conv2d(num_features_in, num_features_out, 
+                        kernel_size=kernel_size, padding=padding),
+               self.activation,
+               ]
+        if self.batch_norm:
+            seq.append( BatchNorm2d(num_features_out) )
+        return nn.Sequential(*seq)
+
+    def forward(self, x):
+        return self.seq(x)
 
 #############################################################
 from warnings import warn
@@ -541,13 +576,17 @@ class RetinaNet(nn.Module):
                  prior = 0.01,
                  no_rpn = False,
                  no_semantic=False,
+                 bypass_semantic=False,
                  squeeze=True,
                  decoder_dropout=None,
                  decoder_activation=nn.ReLU(),
                  encoder_activation=nn.ReLU(inplace=True),
                  batch_norm=False,
+                 regr_feature_sizes=[256]*3,
+                 class_feature_sizes=[256]*3,
                  ):
         super(RetinaNet, self).__init__()
+        self.bypass_semantic = bypass_semantic
         self.squeeze = squeeze
         self.pyramid_levels = [3,4,5]
         self.no_rpn = no_rpn
@@ -586,8 +625,15 @@ class RetinaNet(nn.Module):
         #self.classificationModel = ClassificationModel(256, num_classes=num_classes)
         self.fpn = PyramidFeatures(*([num_classes+1]*3))
 
-        self.regressionModel = RegressionModel(num_classes+1)
-        self.classificationModel = ClassificationModel(num_classes+1, num_classes=num_classes)
+        self.regressionModel = RegressionModel(num_classes+1,
+                                    batch_norm=batch_norm,
+                                    activation=decoder_activation,
+                                    feature_sizes=regr_feature_sizes)
+        self.classificationModel = ClassificationModel(num_classes+1,
+                                    num_classes=num_classes,
+                                    batch_norm=batch_norm,
+                                    activation=decoder_activation,
+                                    feature_sizes=class_feature_sizes)
 
         self.anchors = Anchors(pyramid_levels=self.pyramid_levels, squeeze=squeeze)
 
@@ -603,11 +649,11 @@ class RetinaNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
         
-        self.classificationModel.output.weight.data.fill_(0)
-        self.classificationModel.output.bias.data.fill_(-math.log((1.0-prior)/prior))
+#        self.classificationModel.output.weight.data.fill_(0)
+#        self.classificationModel.output.bias.data.fill_(-math.log((1.0-prior)/prior))
 
-        self.regressionModel.output.weight.data.fill_(0)
-        self.regressionModel.output.bias.data.fill_(0)
+#        self.regressionModel.output.weight.data.fill_(0)
+#        self.regressionModel.output.bias.data.fill_(0)
 
         self.freeze_bn()
         
@@ -643,7 +689,10 @@ class RetinaNet(nn.Module):
 #        import ipdb
 #        ipdb.set_trace()
         if not self.no_semantic:
-            sem_segm = self.decoder([x2, x3, x4])
+            if not self.bypass_semantic:
+                sem_segm = self.decoder([x2, x3, x4])
+            else:
+                sem_segm = img_batch
             features = subsample_features(sem_segm, self.pyramid_levels)
         else:
             sem_segm = None
