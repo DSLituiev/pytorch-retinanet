@@ -2,6 +2,20 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+def sparse_to_onehot(msk, num_channels=3):
+    numdim = len(msk.shape)
+    
+    if numdim == 3:
+        res = torch.zeros((int(msk.shape[0]), int(num_channels), 
+                           int(msk.shape[-2]), int(msk.shape[-1])))
+    else:
+        res = torch.zeros((int(num_channels), 
+                           int(msk.shape[-2]), int(msk.shape[-1])))
+    for ii in range(num_channels):
+        res[...,ii,:,:] = msk==ii
+    return res
+    
+
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
