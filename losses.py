@@ -18,13 +18,13 @@ def get_semantic_metrics(semantic_logits, msk,
 	return semantic_loss, iou_
 
 
-def iou_per_channel_np(mask, pred, stabilize = 1e-12):
+def iou_per_channel_np(mask, pred, stabilize = 1e-12, thr=0.5):
     """
     Input:
         - mask [batch_size, width, height]
         - pred [batch_size, width, height]
     """
-    pred = pred>0.5
+    pred = pred>thr
     union = np.sum(np.logical_or(mask, pred))
     intersection = np.sum(np.logical_and(mask, pred))
     iou = (intersection+stabilize)/(union+stabilize)
@@ -41,23 +41,25 @@ def sparse_iou_np(mask, pred, skip_bg = True,
     """
     start = 1 if skip_bg else 0
     iou_ = np.zeros(pred.shape[1] - start)
+    thr = 1.0/pred.shape[1]
     for cc in range(start, pred.shape[1]):
         prob_channel = pred[:,cc,...]
         mask_channel = (mask == cc)
         iou_[cc-start] = iou_per_channel_np(mask_channel, prob_channel,
+                                            thr = thr,
                                             stabilize=stabilize)
     if reduce:
         iou_ = np.sum(iou_)
     return iou_
 
 
-def iou_per_channel_pt(mask_channel, prob_channel, stabilize = 1e-12):
+def iou_per_channel_pt(mask_channel, prob_channel, stabilize = 1e-12, thr=0.5):
     """
     Input:
         - mask [batch_size, width, height]
         - pred [batch_size, width, height]
     """
-    pred = prob_channel>0.5
+    pred = prob_channel > thr
     union = torch.sum(mask_channel | pred)
     intersection = torch.sum(mask_channel & pred)
     iou = (intersection.float()+stabilize)/(union.float()+stabilize)
@@ -73,10 +75,12 @@ def sparse_iou_pt(mask, pred, skip_bg = True,
     """
     start = 1 if skip_bg else 0
     iou_ = torch.zeros(pred.shape[1] - start)
+    thr = 1.0/float(pred.shape[1])
     for cc in range(start, pred.shape[1]):
         prob_channel = pred[:,cc,...]
         mask_channel = (mask == cc)
         iou_[cc-start] = iou_per_channel_pt(mask_channel, prob_channel,
+                                            thr=thr,
                                             stabilize=stabilize)
     if reduce:
         iou_ = np.sum(iou_)
