@@ -157,10 +157,10 @@ class RegressionModel(BaseRPN):
                                  self.conv_block(num_features_in, feature_sizes[0], 
                                                  kernel_size=3, padding=1),)])
         
-        for ii, fs in enumerate(feature_sizes[1:-1]):
+        for ii, fs in enumerate(feature_sizes[:-1]):
             self.seq["convblock_%d" %(ii+2)] = \
-                    self.conv_block(fs, fs, kernel_size=3, padding=1)
-        self.seq["convblock_final"] = self.conv_block(fs, num_anchors*4, kernel_size=3, padding=1)
+                    self.conv_block(fs, feature_sizes[ii+1], kernel_size=3, padding=1)
+        self.seq["convblock_final"] = self.conv_block(feature_sizes[-1], num_anchors*4, kernel_size=3, padding=1)
         if w_init is not None:
             self.seq["convblock_final"][0].weight.data.fill_(w_init)
         if b_init is not None:
@@ -190,9 +190,10 @@ class ClassificationModel(BaseRPN):
         self.num_anchors = num_anchors
         
         self.seq = [ self.conv_block(num_features_in, feature_sizes[0], kernel_size=3, padding=1),]
-        for fs in feature_sizes[1:-1]:
+
+        for ii, fs in enumerate(feature_sizes[1:]):
             self.seq.append(
-                    self.conv_block(fs, fs, kernel_size=3, padding=1),
+                    self.conv_block(fs, feature_sizes[ii+1], kernel_size=3, padding=1)
                     )
 
         self.final = nn.Conv2d(feature_sizes[-1], num_anchors*num_classes,
@@ -626,6 +627,7 @@ class RetinaNet(nn.Module):
                                     num_classes=num_classes,
                                     batch_norm=batch_norm,
                                     activation=decoder_activation,
+                                    w_init=0.0,
                                     feature_sizes=class_feature_sizes)
 
         self.anchors = Anchors(pyramid_levels=self.pyramid_levels, squeeze=squeeze)
@@ -642,11 +644,11 @@ class RetinaNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
         
-#        self.classificationModel.output.weight.data.fill_(0)
-#        self.classificationModel.output.bias.data.fill_(-math.log((1.0-prior)/prior))
+        self.classificationModel.final.weight.data.fill_(0)
+        self.classificationModel.final.bias.data.fill_(-math.log((1.0-prior)/prior))
 
-#        self.regressionModel.output.weight.data.fill_(0)
-#        self.regressionModel.output.bias.data.fill_(0)
+        self.regressionModel.seq.convblock_final.conv.weight.data.fill_(0)
+        self.regressionModel.seq.convblock_final.conv.bias.data.fill_(0)
 
         self.freeze_bn()
         
