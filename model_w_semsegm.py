@@ -36,6 +36,19 @@ def subsample_features(x, pyramid_levels):
     return pyramid_features
 
 
+class SqueezeScores(nn.Module):
+    def forward(self, results):
+        classification = []
+        for res in results:
+            res = res.reshape(res.shape[:3]+ (-1,))
+            classification.append(res)
+        num_channels_ = classification[0].shape[1]
+        classification = torch.cat(classification, dim=-1).\
+                            permute((0,3,2,1,)).\
+                            reshape(classification[0].shape[0],-1, num_channels_)
+        return classification
+
+
 class PyramidFeatures(nn.Module):
     def __init__(self, C3_size, C4_size, C5_size, feature_size=256):
         super(PyramidFeatures, self).__init__()
@@ -156,13 +169,13 @@ class SharedRPN(BaseRPN):
                                  self.conv_block(num_features_in, feature_sizes_shared[0], 
                                                  kernel_size=3, padding=1),)])
         
-        for ii, fs in enumerate(feature_sizes_shared[1:]):
+        for ii, fs in enumerate(feature_sizes_shared[:-1]):
             self.shared["shared_convblock_1%d" %(ii+2)] = \
-                    self.conv_block(fs, fs, kernel_size=3, padding=1)
+                    self.conv_block(fs, feature_sizes_shared[ii+1], kernel_size=3, padding=1)
         self.shared = nn.Sequential(self.shared)
         num_features_shared_out = fs
         
-        self.regrn = RegressionModel(num_features_shared_out,
+        self.regrn = RegressionModel(num_features_shared_out +num_classes+1,
                                     num_anchors=num_anchors, 
                                      feature_sizes=[128]*2,
                                      activation=activation,
@@ -170,7 +183,7 @@ class SharedRPN(BaseRPN):
                                      b_init=b_init,
                                      w_init=w_init,
                                      )
-        self.classn = ClassificationModel(num_features_shared_out,
+        self.classn = ClassificationModel(num_features_shared_out +num_classes+1,
                                           num_anchors=num_anchors,
                                          num_classes=num_classes, 
                                          prior=prior,
@@ -323,7 +336,7 @@ class UpConv(nn.Module):
         return x
 #############################################################
 def UpsampleBlock(in_channels = 256, out_channels=None, steps=3,
-				 activation=nn.ReLU(), batch_norm=False):
+                 activation=nn.ReLU(), batch_norm=False):
     in_channels_ = []
     out_channels_ = []
     for ii in range(steps):
@@ -338,7 +351,7 @@ def UpsampleBlock(in_channels = 256, out_channels=None, steps=3,
     for ii in range(steps):
 #         print(in_, out_)
         uc.append(UpConv(in_channels_[ii], out_channels_[ii],
-						 merge_mode='', activation=activation,
+                         merge_mode='', activation=activation,
                          batch_norm=batch_norm))
     return torch.nn.Sequential(*uc)
 #############################################################
@@ -629,11 +642,12 @@ class RetinaNet(nn.Module):
                  regr_feature_sizes=[256]*3,
                  class_feature_sizes=[256]*3,
                  shared_feature_sizes = [256]*3,
+                 pyramid_levels = [3,4,5],
                  ):
         super(RetinaNet, self).__init__()
         self.bypass_semantic = bypass_semantic
         self.squeeze = squeeze
-        self.pyramid_levels = [3,4,5]
+        self.pyramid_levels = pyramid_levels
         self.no_rpn = no_rpn
         self.no_semantic = no_semantic
         self.encoder = ResNet(block=block, layers=layers, 
@@ -710,6 +724,7 @@ class RetinaNet(nn.Module):
 
         self.regressionModel.seq.convblock_final.conv.weight.data.fill_(0)
         self.regressionModel.seq.convblock_final.conv.bias.data.fill_(0)
+        self.squeezer = SqueezeScores()
 
         self.freeze_bn()
         
@@ -756,19 +771,18 @@ class RetinaNet(nn.Module):
 #        ipdb.set_trace()
         if not self.no_rpn:
             if self.squeeze:
-                regression = self.collect_rpn_scores(self.regressionModel, features)
-                classification = self.collect_rpn_scores(self.classificationModel, features)
-            else:
-                regression = []
-                classification = []
-                for f in features:
-                    cn, rn = sharedRPN(f)
-                    regression.append(rn)
-                    classification.append(cn)
+                # regression = self.collect_rpn_scores(self.regressionModel, features)
+                # classification = self.collect_rpn_scores(self.classificationModel, features)
+                cn, rn = list(zip(*(self.sharedRPN(ff) for ff in features)))
 #                regression = [self.regressionModel(f) for f in features]
 #                classification = [self.classificationModel(f) for f in features]
-            #regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
-            #classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
+                regression = self.squeezer(rn)
+                classification = self.squeezer(cn)
+                del cn, rn
+                #regression = torch.cat(regression, dim=1)
+                #classification = torch.cat(classification, dim=1)
+            else:
+                raise NotImplementedError()
         else:
             regression = None
             classification = None
@@ -820,7 +834,7 @@ class RetinaNet(nn.Module):
 
 
 class ApplyPredictions(nn.Module):
-    def __init__(self, anchors, thr=0.05, nms_thr=0.5, height=None, width=None):
+    def __init__(self, anchors, thr=0.5, nms_thr=0.5, height=None, width=None):
         super(ApplyPredictions, self).__init__()
         self.height = height
         self.width = width
@@ -843,14 +857,17 @@ class ApplyPredictions(nn.Module):
             anchors = anchors.cuda()
 
         transformed_anchors = self.regressBoxes(anchors, regression)
-        transformed_anchors = self.clipBoxes(transformed_anchors, height=height, width=width)
+        transformed_anchors = self.clipBoxes(transformed_anchors, 
+                                             height=self.height, width=self.width)
 
         scores = torch.max(classification, dim=2, keepdim=True)[0]
         scores_over_thresh = (scores > self.thr)[0, :, 0]
+        ## for debugging
+        self.scores_over_thresh = scores_over_thresh
 
         if scores_over_thresh.sum() == 0:
             # no boxes to NMS, just return
-            return [ torch.zeros(0), torch.zeros(0, 4), ]
+            return [ torch.zeros(0), torch.zeros(0, 4), torch.zeros(0, 4), ]
 
         classification_selected = classification[:, scores_over_thresh, :]
         transformed_anchors = transformed_anchors[:, scores_over_thresh, :]
@@ -858,8 +875,8 @@ class ApplyPredictions(nn.Module):
 
         # the code here uses [x0, y0, h, w] format
         # the NMS module accepts [x0, y0, x1, y1] format
-        transformed_anchors_coord = transformed_anchors.clone()
-        transformed_anchors_coord[..., 2:] = transformed_anchors_coord[..., 2:] + transformed_anchors[..., :2]
+        transformed_anchors_coord = transformed_anchors#.clone()
+        #transformed_anchors_coord[..., 2:] = transformed_anchors_coord[..., 2:] + transformed_anchors[..., :2]
 
         combo = torch.cat([transformed_anchors_coord, scores], dim=2)[0,:,:]
         anchors_nms_idx = nms(combo, self.nms_thr)
