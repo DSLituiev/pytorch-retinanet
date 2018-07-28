@@ -74,6 +74,8 @@ if __name__ == '__main__':
                         dest='overwrite', action='store_true')
     parser.add_argument('--class-feature-sizes', nargs='+', type=int, default=[64, 32])
     parser.add_argument('--regr-feature-sizes', nargs='+', type=int, default=[64, 64])
+    parser.add_argument('--shared-feature-sizes', nargs='+', type=int, default=[256, 128, 128])
+    parser.add_argument('--pyramid-levels', nargs='+', type=int, default=[3,4])
    
     parser = parser.parse_args()
 #    parser = parser.parse_args(args)
@@ -153,8 +155,10 @@ if __name__ == '__main__':
                      encoder_activation = encoder_activation,
                      batch_norm = parser.batch_norm,
                      bypass_semantic = parser.bypass_semantic,
-                     regr_feature_sizes=[256]*3,
-                     class_feature_sizes=[256]*3,
+                     regr_feature_sizes=parser.regr_feature_sizes,
+                     class_feature_sizes=parser.regr_feature_sizes,
+                     shared_feature_sizes = parser.shared_feature_sizes,
+                     pyramid_levels=parser.pyramid_levels,
                      )
     # Create the model
     if parser.depth == 18:
@@ -248,6 +252,7 @@ if __name__ == '__main__':
 
                 if parser.bypass_semantic:
                     img = utils.sparse_to_onehot(msk, num_channels=1+num_channels)
+                    img = torch.log2(0.25*(1+2*img))
 
                 classifications, regressions, anchors, semantic_logits =\
                     retinanet(img)
@@ -263,9 +268,9 @@ if __name__ == '__main__':
                     classification_loss, regression_loss =\
                         loss_func_bbox(classifications, regressions, 
                                    anchors, annot)
-                    tmp = classifications.detach().cpu().numpy().ravel()
-                    print("score min: {:.4f}\tmedian: {:.4f}\tmax: {:.4f}".format(
-                            np.min(tmp), np.median(tmp), np.max(tmp)))
+                    #tmp = classifications.detach().cpu().numpy().ravel()
+                    #print("score min: {:.4f}\tmedian: {:.4f}\tmax: {:.4f}".format(
+                    #        np.min(tmp), np.median(tmp), np.max(tmp)))
                 else:
                     if use_gpu:
                         classification_loss = regression_loss = torch.tensor(0.0).cuda()
