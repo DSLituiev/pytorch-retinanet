@@ -6,6 +6,7 @@ def plot_bboxes(anc, clsf=None, ax=None,
                 encoding='coord',
                 edgecolor='r',
                 facecolor='none',
+                alpha=1.0,
                           ):
     """
     encoding in ('coord', 'size')
@@ -19,7 +20,7 @@ def plot_bboxes(anc, clsf=None, ax=None,
     if clsf is not None:
         alphas = 1 - clsf
     else:
-        alphas = [1.0] * len(anc)
+        alphas = [alpha] * len(anc)
 
     for bbox, aa in zip(anc, alphas):
         x0, y0, x1,y1 = bbox#[0]
