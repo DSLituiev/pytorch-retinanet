@@ -16,7 +16,8 @@ def plot_bboxes(anc, clsf=None, ax=None,
     
 
     if ax is None:
-        fig, ax = plt.subplots(1)
+        #fig, ax = plt.subplots(1)
+        ax = plt.gca()
     if clsf is not None:
         alphas = 1 - clsf
     else:
@@ -51,11 +52,11 @@ def plot_bboxes(anc, clsf=None, ax=None,
     new_xlims = [min(curr_xlims[0], old_xlims[0]),
                  max(curr_xlims[1], old_xlims[1])]
     
-    old_ylims = ax.get_ylim()
+    old_ylims = sorted(ax.get_ylim())
     curr_ylims = 1.05*np.r_[float(anc[:,1].min()), ymax]
     new_ylims = [min(curr_ylims[0], old_ylims[0]), 
                  max(curr_ylims[1], old_ylims[1])]
     
     ax.set_xlim(new_xlims)
-    ax.set_ylim(new_ylims)
+    ax.set_ylim(new_ylims[::-1])
 
